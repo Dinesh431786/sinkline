@@ -794,6 +794,63 @@ def test_shape_erases_literals():
     assert shape_of(a) == shape_of(b) == "env_eq"
 
 
+def test_unguarded_sink_has_zero_bits():
+    from guards import extract_guards
+    from trigger_rarity import score
+    gs = extract_guards("import os\nos.system('ls')\n")[0]
+    assert score(gs).bits == 0.0
+
+
+def test_rare_trigger_yields_high_surprisal():
+    from guards import extract_guards
+    from trigger_rarity import score, TRIGGER_BITS_THRESHOLD
+    code = ("import os, random, socket\n"
+            "if random.random() < 0.005:\n"
+            "    if socket.gethostname() == 'build-07':\n"
+            "        os.system('curl evil')\n")
+    s = score(extract_guards(code)[0])
+    # -log2(0.005) ~ 7.6 bits, -log2(0.02) ~ 5.6 bits
+    assert s.bits > TRIGGER_BITS_THRESHOLD
+    assert s.tiers["analytic"] == 1 and s.tiers["calibrated"] == 1
+
+
+def test_opaque_guards_stay_below_threshold():
+    """Benign code full of unrecognised conditions must not trip the detector."""
+    from guards import extract_guards
+    from trigger_rarity import score, TRIGGER_BITS_THRESHOLD
+    code = ("import os\n"
+            "if cfg.enabled:\n"
+            "    if cfg.mode == helper():\n"
+            "        if other(x):\n"
+            "            os.system('ls')\n")
+    s = score(extract_guards(code)[0])
+    assert s.bits < TRIGGER_BITS_THRESHOLD
+    assert s.tiers["unknown"] == 3
+
+
+def test_time_guard_is_dormancy_not_probability():
+    from guards import extract_guards
+    from trigger_rarity import score
+    code = ("import os, datetime\n"
+            "if datetime.date.today() > datetime.date(2027, 1, 1):\n"
+            "    os.system('rm -rf /')\n")
+    s = score(extract_guards(code)[0])
+    assert s.dormant is True
+
+
+def test_surprisal_is_monotone_in_guard_count():
+    """Spec 6: adding an independent guard can never reduce the bit count."""
+    from guards import GuardedSink, GuardPredicate
+    from trigger_rarity import score
+    rare = GuardPredicate("random_lt", "random.random() < 0.01", 1,
+                          operands=(0.01,))
+    previous = -1.0
+    for n in range(1, 5):
+        bits = score(GuardedSink("os.system", 1, tuple([rare] * n))).bits
+        assert bits > previous, f"{n} guards scored {bits}, not above {previous}"
+        previous = bits
+
+
 # --- threat taxonomy: names must describe what is detected ----------------- #
 def test_no_quantum_named_threat_categories():
     """Quantum naming on non-quantum detections reads as overclaiming."""
