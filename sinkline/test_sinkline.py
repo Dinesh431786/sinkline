@@ -690,6 +690,50 @@ def test_dedupe_removes_duplicates():
     assert len(dedupe([f1, f2])) == 1
 
 
+# --- guard surprisal: how improbable are the conditions reaching a sink? ---- #
+def test_extract_guards_finds_nested_conditions():
+    from guards import extract_guards
+    code = ("import os, random, socket\n"
+            "if random.random() < 0.005:\n"
+            "    if socket.gethostname() == 'build-07':\n"
+            "        os.system('curl evil')\n")
+    gs = extract_guards(code)
+    assert len(gs) == 1
+    assert gs[0].sink_name == "os.system"
+    assert [g.kind for g in gs[0].guards] == ["random_lt", "hostname_eq"]
+    assert gs[0].guards[0].operands == (0.005,)
+
+
+def test_extract_guards_unguarded_sink_has_no_guards():
+    from guards import extract_guards
+    code = "import os\nos.system('ls')\n"
+    gs = extract_guards(code)
+    assert len(gs) == 1 and gs[0].guards == ()
+
+
+def test_extract_guards_unrecognised_condition_is_unknown():
+    from guards import extract_guards
+    code = ("import os\n"
+            "if some_helper(x).enabled:\n"
+            "    os.system('ls')\n")
+    gs = extract_guards(code)
+    assert [g.kind for g in gs[0].guards] == ["unknown"]
+
+
+def test_extract_guards_records_negation():
+    from guards import extract_guards
+    code = ("import os\n"
+            "if not os.environ.get('CI'):\n"
+            "    os.system('ls')\n")
+    gs = extract_guards(code)
+    assert gs[0].guards[0].kind == "env_eq" and gs[0].guards[0].negated is True
+
+
+def test_extract_guards_survives_syntax_error():
+    from guards import extract_guards
+    assert extract_guards("def broken(:\n") == []
+
+
 # --- threat taxonomy: names must describe what is detected ----------------- #
 def test_no_quantum_named_threat_categories():
     """Quantum naming on non-quantum detections reads as overclaiming."""
