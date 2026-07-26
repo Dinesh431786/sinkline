@@ -59,9 +59,31 @@ def run_bandit(files: Dict[str, str], binary: str = "bandit") -> BaselineResult:
     return _run("bandit", [binary, "-r", "-f", "json", "-q"], files, parse)
 
 
-def run_semgrep(files: Dict[str, str], binary: str = "semgrep") -> BaselineResult:
+class EmptyRuleset(Exception):
+    """Semgrep ran but loaded no rules, so 'no findings' means nothing."""
+
+
+def run_semgrep(files: Dict[str, str], binary: str = "semgrep",
+                config: str = "p/security-audit") -> BaselineResult:
+    """Run semgrep, refusing to interpret a zero-rule run as a clean result.
+
+    Semgrep pulls its rules from a network registry. When that fetch fails it
+    still exits 0 and reports `results: []` with an empty rule list, which is
+    indistinguishable from a genuine clean scan unless you check. Counting that
+    as a baseline miss would inflate every added-detection number this harness
+    produces, so it is reported as unavailable instead.
+    """
     def parse(out: str) -> bool:
         data = json.loads(out or "{}")
+        if not data.get("time", {}).get("rules"):
+            raise EmptyRuleset(
+                "semgrep loaded 0 rules (registry unreachable?); "
+                "a zero-rule scan is not evidence of anything")
         return bool(data.get("results"))
-    return _run("semgrep", [binary, "--config", "p/python", "--json", "-q"],
-                files, parse)
+
+    result = _run("semgrep", [binary, "--config", config, "--json", "-q"],
+                  files, parse)
+    if "loaded 0 rules" in result.detail:
+        return BaselineResult("semgrep", False, False,
+                              "semgrep loaded 0 rules; treated as unavailable")
+    return result

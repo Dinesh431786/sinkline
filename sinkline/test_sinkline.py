@@ -1127,6 +1127,39 @@ def test_baseline_reports_unavailable_rather_than_false_negative():
     assert "not available" in r.detail.lower()
 
 
+def test_semgrep_with_zero_rules_is_not_treated_as_a_clean_scan():
+    """A registry fetch failure makes semgrep exit 0 with results: [].
+
+    Reporting that as 'baseline found nothing' would invent a miss for every
+    sample and inflate the added-detection count, which is the headline number.
+    """
+    _repo_root()
+    import json
+    from research import baselines
+    empty_rules = json.dumps({"results": [], "time": {"rules": []}})
+    real_run = json.dumps({"results": [{"check_id": "x"}],
+                           "time": {"rules": ["a", "b"]}})
+
+    def fake(tool, argv, files, parse):
+        payload = empty_rules if fake.mode == "empty" else real_run
+        try:
+            return baselines.BaselineResult(tool, True, parse(payload), "")
+        except Exception as exc:
+            return baselines.BaselineResult(tool, True, False, str(exc))
+
+    original = baselines._run
+    baselines._run = fake
+    try:
+        fake.mode = "empty"
+        r = baselines.run_semgrep({"a.py": "x = 1\n"})
+        assert r.available is False, "zero-rule run must not count as a baseline"
+        fake.mode = "real"
+        r = baselines.run_semgrep({"a.py": "x = 1\n"})
+        assert r.available is True and r.alerted is True
+    finally:
+        baselines._run = original
+
+
 def test_method_hash_is_deterministic_and_covers_the_prior_table():
     _repo_root()
     from research.freeze import _FROZEN_FILES, method_hash
