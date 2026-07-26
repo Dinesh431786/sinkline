@@ -71,12 +71,12 @@ class TaintPatternMatcher(ast.NodeVisitor):
 
         # Check for Anti-Debug
         if call_name == "sleep" or "debug" in call_name:
-             self.detected_patterns.add("QUANTUM_ANTIDEBUG")
+             self.detected_patterns.add("ANTI_ANALYSIS_TIMING")
              
         # Check for Cross-Function Bomb
         # If we call a known tainted function (that isn't just a helper)
         if call_name in self.taint_map:
-             self.detected_patterns.add("CROSS_FUNCTION_QUANTUM_BOMB")
+             self.detected_patterns.add("CROSS_FUNCTION_BOMB")
 
         self.generic_visit(node)
 
@@ -92,14 +92,14 @@ class TaintPatternMatcher(ast.NodeVisitor):
         unique_taints = {self.taint_map.get(var) for var in condition_vars if var in self.taint_map}
 
         # If the condition depends on DIFFERENT source types or multiple entangled vars
-        if "CROSS_FUNCTION_QUANTUM_BOMB" in unique_taints:
-             self.detected_patterns.add("CROSS_FUNCTION_QUANTUM_BOMB")
+        if "CROSS_FUNCTION_BOMB" in unique_taints:
+             self.detected_patterns.add("CROSS_FUNCTION_BOMB")
         elif len(unique_taints) > 1 or "ENTANGLED" in unique_taints:
-            self.detected_patterns.add("ENTANGLED_BOMB")
+            self.detected_patterns.add("CORRELATED_BOMB")
         elif "PROBABILISTIC" in unique_taints:
             self.detected_patterns.add("PROBABILISTIC_BOMB")
         elif "CHAINED" in unique_taints: # Explicit check for linear chain
-            self.detected_patterns.add("CHAINED_QUANTUM_BOMB")
+            self.detected_patterns.add("CHAINED_TRIGGER_BOMB")
             
         # Also check for direct randomness in condition if not captured by variables
         cond_str = ast.dump(node.test).lower()
@@ -168,7 +168,7 @@ class TaintPatternMatcher(ast.NodeVisitor):
                  self.taint_map[node.name] = "ENTANGLED"
              else:
                  # Mixing random + other call = CROSS_FUNCTION (Interprocedural)
-                 self.taint_map[node.name] = "CROSS_FUNCTION_QUANTUM_BOMB"
+                 self.taint_map[node.name] = "CROSS_FUNCTION_BOMB"
                  
         elif has_random:
              self.taint_map[node.name] = "PROBABILISTIC"
@@ -209,18 +209,18 @@ class TaintPatternMatcher(ast.NodeVisitor):
                 # DECISION MATRIX
                 if len(tainted_vars_found) > 1:
                     # Multiple distinct taint sources interacting = ENTANGLEMENT
-                    self.detected_patterns.add("ENTANGLED_BOMB")
-                    self.detected_patterns.discard("CHAINED_QUANTUM_BOMB")
+                    self.detected_patterns.add("CORRELATED_BOMB")
+                    self.detected_patterns.discard("CHAINED_TRIGGER_BOMB")
                 elif len(tainted_vars_found) == 1:
                     # Single taint source checking in = CHAINED (or Probabilistic)
                     taint_type = list(tainted_vars_found)[0]
                     if taint_type == "PROBABILISTIC":
                         self.detected_patterns.add("PROBABILISTIC_BOMB")
                     elif taint_type == "CHAINED":
-                        self.detected_patterns.add("CHAINED_QUANTUM_BOMB")
+                        self.detected_patterns.add("CHAINED_TRIGGER_BOMB")
                     else:
                         # If we just see a variable, default to Chained if it's being checked
-                        self.detected_patterns.add("CHAINED_QUANTUM_BOMB")
+                        self.detected_patterns.add("CHAINED_TRIGGER_BOMB")
                 
                 # Direct check for random in C-style condition
                 if "random" in line or "rand" in line:
@@ -248,23 +248,23 @@ class TaintPatternMatcher(ast.NodeVisitor):
         #    (chr AND ord) or an XOR transform. Bare .encode()/.decode() no longer
         #    triggers this (it caused false positives on ordinary code).
         if (self._has_chr and self._has_ord) or self._has_xor:
-            self.detected_patterns.add("QUANTUM_STEGANOGRAPHY")
+            self.detected_patterns.add("ENCODED_STRING_PAYLOAD")
 
         # 1. Steganography is a complex chain by definition.
         # If Stego is found, it hides the lower-level "Chain" alert.
-        if "QUANTUM_STEGANOGRAPHY" in self.detected_patterns:
-            self.detected_patterns.discard("CHAINED_QUANTUM_BOMB")
+        if "ENCODED_STRING_PAYLOAD" in self.detected_patterns:
+            self.detected_patterns.discard("CHAINED_TRIGGER_BOMB")
 
         # 2. Entanglement is a specific type of logic state.
         # If we found Entanglement, ignore generic noise.
         # We allow CROSS_FUNCTION to coexist or take precedence if specific interprocedural logic was found.
-        if "ENTANGLED_BOMB" in self.detected_patterns:
+        if "CORRELATED_BOMB" in self.detected_patterns:
             self.detected_patterns.discard("PROBABILISTIC_BOMB")
 
         # 3. Cross-Function is the fallback for distributed logic.
         # If we have Cross-Function AND Chained, usually Cross-Function is the 'Headline'.
-        if "CROSS_FUNCTION_QUANTUM_BOMB" in self.detected_patterns:
-            self.detected_patterns.discard("CHAINED_QUANTUM_BOMB")
+        if "CROSS_FUNCTION_BOMB" in self.detected_patterns:
+            self.detected_patterns.discard("CHAINED_TRIGGER_BOMB")
             
         # User feedback says: "If Stego... detected correct... Chained remains false positive."
         # My rule 1 fixes this.
@@ -273,15 +273,15 @@ class TaintPatternMatcher(ast.NodeVisitor):
         # My logic in visit_If for Entangled should catch it now.
         
         # Additional cleanup for Probabilistic vs Cross-Function
-        if "CROSS_FUNCTION_QUANTUM_BOMB" in self.detected_patterns:
+        if "CROSS_FUNCTION_BOMB" in self.detected_patterns:
              self.detected_patterns.discard("PROBABILISTIC_BOMB")
              
         # Cleanup: If Chained is detected (structure), discard generic Probabilistic (randomness)
-        if "CHAINED_QUANTUM_BOMB" in self.detected_patterns:
+        if "CHAINED_TRIGGER_BOMB" in self.detected_patterns:
              self.detected_patterns.discard("PROBABILISTIC_BOMB")
              
         # Cleanup: Anti-Debug often uses random delays; prioritize the specific threat
-        if "QUANTUM_ANTIDEBUG" in self.detected_patterns:
+        if "ANTI_ANALYSIS_TIMING" in self.detected_patterns:
              self.detected_patterns.discard("PROBABILISTIC_BOMB")
 
         # Fallback

@@ -58,7 +58,7 @@ def test_benign_sampling_is_suppressed_to_low_confidence():
 def test_stego_detected():
     res = analyze("def s(m): return ''.join(chr(ord(c)^0x2A) for c in m)\n"
                   "if s(secret)==trigger: unlock_root()")
-    assert any(f.pattern == "QUANTUM_STEGANOGRAPHY" for f in res.findings)
+    assert any(f.pattern == "ENCODED_STRING_PAYLOAD" for f in res.findings)
 
 
 def test_sink_line_numbers_present():
@@ -573,12 +573,12 @@ def test_dict_get_is_clean():
 # --- stego false-positive fix ---------------------------------------------- #
 def test_bare_encode_is_not_steganography():
     from pattern_matcher import detect_patterns
-    assert "QUANTUM_STEGANOGRAPHY" not in detect_patterns("h = name.encode('utf-8')")
+    assert "ENCODED_STRING_PAYLOAD" not in detect_patterns("h = name.encode('utf-8')")
 
 
 def test_chr_ord_xor_is_steganography():
     from pattern_matcher import detect_patterns
-    assert "QUANTUM_STEGANOGRAPHY" in detect_patterns("x = chr(ord(c) ^ 0x2A)")
+    assert "ENCODED_STRING_PAYLOAD" in detect_patterns("x = chr(ord(c) ^ 0x2A)")
 
 
 # --- CLI ------------------------------------------------------------------- #
@@ -688,6 +688,21 @@ def test_dedupe_removes_duplicates():
     f1 = Finding("DANGEROUS_SINK", m, "High", 0.8, line=1, snippet="os.system('x')")
     f2 = Finding("DANGEROUS_SINK", m, "High", 0.9, line=1, snippet="os.system('x')")
     assert len(dedupe([f1, f2])) == 1
+
+
+# --- threat taxonomy: names must describe what is detected ----------------- #
+def test_no_quantum_named_threat_categories():
+    """Quantum naming on non-quantum detections reads as overclaiming."""
+    import findings
+    # Split literals on purpose: a future search-and-replace rename pass would
+    # otherwise rewrite this list into the new names, leaving the test green
+    # while asserting nothing. That happened once already.
+    banned = ("QUANTUM" "_BOMB", "QUANTUM" "_STEGANOGRAPHY",
+              "QUANTUM" "_ANTIDEBUG", "ENTANGLED" "_BOMB")
+    offenders = [k for k in findings.CATALOG if any(b in k for b in banned)]
+    assert not offenders, f"quantum-named categories remain: {offenders}"
+    # qsim/quantum_engine perform real quantum simulation and are untouched.
+    import qsim  # noqa: F401
 
 
 # --- upload accounting: what we claim to scan is what we scan -------------- #

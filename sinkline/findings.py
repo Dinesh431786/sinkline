@@ -82,8 +82,8 @@ CATALOG: Dict[str, ThreatMeta] = {
             "Remove randomness from security-relevant control flow. If sampling "
             "is legitimate, isolate it from privileged side effects (no os/exec)."),
     ),
-    "ENTANGLED_BOMB": ThreatMeta(
-        rule_id="QT.ENTANGLED_BOMB",
+    "CORRELATED_BOMB": ThreatMeta(
+        rule_id="QT.CORRELATED_BOMB",
         title="Entangled (Multi-Condition) Logic Bomb",
         cwe="CWE-511", cwe_name="Logic/Time Bomb",
         severity="High", base_confidence="Medium",
@@ -94,7 +94,7 @@ CATALOG: Dict[str, ThreatMeta] = {
             "Audit every condition feeding the privileged action; collapse the "
             "coupled checks and verify none combine to form a hidden trigger."),
     ),
-    "CHAINED_QUANTUM_BOMB": ThreatMeta(
+    "CHAINED_TRIGGER_BOMB": ThreatMeta(
         rule_id="QT.CHAINED_BOMB",
         title="Chained / Stateful Logic Bomb",
         cwe="CWE-511", cwe_name="Logic/Time Bomb",
@@ -106,7 +106,7 @@ CATALOG: Dict[str, ThreatMeta] = {
             "Trace the state variable's lifecycle; ensure no accumulated counter "
             "unlocks privileged operations after N events."),
     ),
-    "CROSS_FUNCTION_QUANTUM_BOMB": ThreatMeta(
+    "CROSS_FUNCTION_BOMB": ThreatMeta(
         rule_id="QT.CROSS_FUNCTION_BOMB",
         title="Cross-Function Embedded Malicious Code",
         cwe="CWE-506", cwe_name="Embedded Malicious Code",
@@ -118,7 +118,7 @@ CATALOG: Dict[str, ThreatMeta] = {
             "Perform interprocedural review; follow the data/control flow between "
             "the cooperating functions to expose the assembled payload."),
     ),
-    "QUANTUM_STEGANOGRAPHY": ThreatMeta(
+    "ENCODED_STRING_PAYLOAD": ThreatMeta(
         rule_id="QT.STEGANOGRAPHY",
         title="Steganographic / Covert Data Channel",
         cwe="CWE-515", cwe_name="Covert Storage Channel",
@@ -130,7 +130,7 @@ CATALOG: Dict[str, ThreatMeta] = {
             "Inspect the encode/decode routine and the data it transforms; confirm "
             "it is not concealing commands, keys, or exfiltrated data."),
     ),
-    "QUANTUM_ANTIDEBUG": ThreatMeta(
+    "ANTI_ANALYSIS_TIMING": ThreatMeta(
         rule_id="QT.ANTIDEBUG",
         title="Anti-Analysis / Anti-Debug Behaviour",
         cwe="CWE-489", cwe_name="Active Debug Code / Anti-Analysis",

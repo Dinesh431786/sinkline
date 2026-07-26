@@ -82,11 +82,11 @@ except Exception:  # pragma: no cover
 # Per-pattern circuit arguments (kept stable with the original UI).
 PATTERN_ARGS: Dict[str, dict] = {
     "PROBABILISTIC_BOMB": {"prob": 0.22},
-    "ENTANGLED_BOMB": {"probs": [0.19, 0.71]},
-    "CHAINED_QUANTUM_BOMB": {"chain_length": 3, "prob": 0.14},
-    "QUANTUM_STEGANOGRAPHY": {"encode_val": 1},
-    "QUANTUM_ANTIDEBUG": {"prob": 0.08},
-    "CROSS_FUNCTION_QUANTUM_BOMB": {"func_probs": [0.31, 0.47, 0.99]},
+    "CORRELATED_BOMB": {"probs": [0.19, 0.71]},
+    "CHAINED_TRIGGER_BOMB": {"chain_length": 3, "prob": 0.14},
+    "ENCODED_STRING_PAYLOAD": {"encode_val": 1},
+    "ANTI_ANALYSIS_TIMING": {"prob": 0.08},
+    "CROSS_FUNCTION_BOMB": {"func_probs": [0.31, 0.47, 0.99]},
 }
 
 # Dangerous sinks. To avoid false positives (e.g. Flask's ``app.run()`` or a
@@ -330,7 +330,7 @@ def _confidence_for(pattern: str, sinks: List[SinkHit], symbolic_unsafe: bool) -
     guarded_sink = any(s.in_guarded_branch for s in sinks)
     any_sink = bool(sinks)
 
-    if pattern == "QUANTUM_STEGANOGRAPHY":
+    if pattern == "ENCODED_STRING_PAYLOAD":
         # Stego is about encoding primitives; sink presence elevates it.
         conf = "High" if any_sink else "Medium"
     elif guarded_sink:

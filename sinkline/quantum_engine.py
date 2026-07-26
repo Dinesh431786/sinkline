@@ -37,15 +37,15 @@ def map_to_unitary(pattern, **kwargs):
     """Map a classical control-flow pattern to a quantum unitary circuit."""
     if pattern == "PROBABILISTIC_BOMB":
         return _unitary_probabilistic(kwargs.get("prob", 0.2))
-    elif pattern == "ENTANGLED_BOMB":
+    elif pattern == "CORRELATED_BOMB":
         return _unitary_entangled(kwargs.get("probs", [0.2, 0.5]))
-    elif pattern == "CHAINED_QUANTUM_BOMB":
+    elif pattern == "CHAINED_TRIGGER_BOMB":
         return _unitary_chained(kwargs.get("chain_length", 3), kwargs.get("prob", 0.3))
-    elif pattern == "QUANTUM_STEGANOGRAPHY":
+    elif pattern == "ENCODED_STRING_PAYLOAD":
         return _unitary_stego(kwargs.get("encode_val", 1))
-    elif pattern == "QUANTUM_ANTIDEBUG":
+    elif pattern == "ANTI_ANALYSIS_TIMING":
         return _unitary_antidebug(kwargs.get("prob", 0.1))
-    elif pattern == "CROSS_FUNCTION_QUANTUM_BOMB":
+    elif pattern == "CROSS_FUNCTION_BOMB":
         return _unitary_cross_func(kwargs.get("func_probs", [0.3, 0.5, 0.8]))
     else:
         return None
@@ -163,11 +163,11 @@ def calculate_risk_score(pattern, circuit, entropy) -> float:
     """
     weights = {
         "PROBABILISTIC_BOMB": 1.5,
-        "CHAINED_QUANTUM_BOMB": 2.0,
-        "CROSS_FUNCTION_QUANTUM_BOMB": 2.5,
-        "ENTANGLED_BOMB": 3.0,
-        "QUANTUM_STEGANOGRAPHY": 3.5,
-        "QUANTUM_ANTIDEBUG": 1.5,
+        "CHAINED_TRIGGER_BOMB": 2.0,
+        "CROSS_FUNCTION_BOMB": 2.5,
+        "CORRELATED_BOMB": 3.0,
+        "ENCODED_STRING_PAYLOAD": 3.5,
+        "ANTI_ANALYSIS_TIMING": 1.5,
     }
     w_i = weights.get(pattern, 1.0)
 
@@ -274,8 +274,8 @@ def visualize_quantum_state(circuit, title="Quantum State Probabilities"):
 
 if __name__ == "__main__":
     print("Sinkline Lightweight Quantum Engine: self-test")
-    for pat in ["PROBABILISTIC_BOMB", "ENTANGLED_BOMB", "CHAINED_QUANTUM_BOMB",
-                "QUANTUM_STEGANOGRAPHY", "QUANTUM_ANTIDEBUG", "CROSS_FUNCTION_QUANTUM_BOMB"]:
+    for pat in ["PROBABILISTIC_BOMB", "CORRELATED_BOMB", "CHAINED_TRIGGER_BOMB",
+                "ENCODED_STRING_PAYLOAD", "ANTI_ANALYSIS_TIMING", "CROSS_FUNCTION_BOMB"]:
         circ = map_to_unitary(pat)
         score, _, _, metrics = run_quantum_analysis(circ, pat)
         print(f"  {pat:32s} risk={score:.3f}  {format_score(score)[1]}")

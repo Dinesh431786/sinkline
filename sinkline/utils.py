@@ -41,9 +41,9 @@ def is_quantum_pattern(pattern):
     """
     return pattern in [
         "PROBABILISTIC_BOMB",
-        "ENTANGLED_BOMB",
+        "CORRELATED_BOMB",
         "CHAINED_BOMB",
-        "QUANTUM_STEGANOGRAPHY",
-        "QUANTUM_ANTIDEBUG",
-        "CROSS_FUNCTION_QUANTUM_BOMB"
+        "ENCODED_STRING_PAYLOAD",
+        "ANTI_ANALYSIS_TIMING",
+        "CROSS_FUNCTION_BOMB"
     ]
