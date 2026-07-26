@@ -1,0 +1,20 @@
+# Sinkline — runtime dependencies
+# Core (required)
+numpy>=1.24
+scikit-learn>=1.3
+z3-solver>=4.12
+
+# Visualization / graphs (optional but recommended)
+matplotlib>=3.7
+networkx>=3.1
+pygments>=2.16
+
+# Optional AI explanation layer (local fallback used when absent/unset).
+# Modern SDK; the legacy `google-generativeai` is auto-detected if present.
+google-genai>=0.3 ; python_version >= "3.9"
+
+# NOTE: the web UI (webapp.py) and the CLI (cli.py) use only the Python standard
+# library for serving/argument handling — no Streamlit/Flask/FastAPI, no build
+# step. `cirq` is also intentionally NOT required: Sinkline ships its own
+# lightweight pure-NumPy quantum-inspired simulator (qsim.py), validated against
+# cirq, for a ~10x faster import and a few-KB footprint instead of hundreds of MB.

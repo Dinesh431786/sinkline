@@ -1,0 +1,118 @@
+# semgrep-python-security.yaml — standard offline Python security rules
+# ============================================================================
+# A vendored, offline ruleset of the *standard* Python security checks that
+# Semgrep's public `p/python` / `p/security-audit` packs cover. It exists
+# because Semgrep's rule registry (semgrep.dev) is unreachable in air-gapped /
+# locked-down CI environments (exactly the environment Sinkline targets), so the
+# comparative benchmark can still run Semgrep fully offline and reproducibly.
+#
+# These are deliberately faithful, unrigged reimplementations of well-known
+# public rules (exec/eval, shell=True, os.system, f-string SQL, pickle.loads,
+# yaml.load, md5, verify=False, hard-coded secrets, mktemp, XML parse). They are
+# NOT gimped to make Sinkline look good: on the classic OWASP/CWE categories
+# Semgrep and Sinkline are expected to tie — that parity is the honest point.
+# Semgrep (like Bandit) has no rule *class* for cross-file taint chains,
+# dependency typosquatting, secret→sink correlation, or probabilistic logic
+# bombs, so those categories are simply out of its reach regardless of ruleset.
+rules:
+  - id: python-exec-use
+    languages: [python]
+    severity: ERROR
+    message: Use of exec() can execute arbitrary code (CWE-95).
+    metadata: {cwe: "CWE-95"}
+    pattern: exec(...)
+
+  - id: python-eval-use
+    languages: [python]
+    severity: ERROR
+    message: Use of eval() can execute arbitrary code (CWE-95).
+    metadata: {cwe: "CWE-95"}
+    pattern: eval(...)
+
+  - id: subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: subprocess call with shell=True is vulnerable to command injection (CWE-78).
+    metadata: {cwe: "CWE-78"}
+    pattern: subprocess.$M(..., shell=True, ...)
+
+  - id: os-system-call
+    languages: [python]
+    severity: WARNING
+    message: os.system() passes its argument to a shell (CWE-78).
+    metadata: {cwe: "CWE-78"}
+    pattern: os.system(...)
+
+  - id: formatted-sql-execute
+    languages: [python]
+    severity: ERROR
+    message: SQL query built with an f-string / format is injectable (CWE-89).
+    metadata: {cwe: "CWE-89"}
+    patterns:
+      - pattern-either:
+          - pattern: $CUR.execute(f"...", ...)
+          - pattern: $CUR.execute("..." % ..., ...)
+          - pattern: $CUR.execute("...".format(...), ...)
+
+  - id: pickle-loads
+    languages: [python]
+    severity: WARNING
+    message: pickle.loads on untrusted data enables code execution (CWE-502).
+    metadata: {cwe: "CWE-502"}
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+
+  - id: yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: yaml.load without SafeLoader can construct arbitrary objects (CWE-502).
+    metadata: {cwe: "CWE-502"}
+    patterns:
+      - pattern: yaml.load($X)
+
+  - id: weak-hash-md5
+    languages: [python]
+    severity: WARNING
+    message: MD5 is cryptographically broken (CWE-327).
+    metadata: {cwe: "CWE-327"}
+    patterns:
+      - pattern: hashlib.md5(...)
+      - pattern-not: hashlib.md5(..., usedforsecurity=False)
+
+  - id: requests-verify-false
+    languages: [python]
+    severity: ERROR
+    message: TLS certificate verification disabled (CWE-295).
+    metadata: {cwe: "CWE-295"}
+    pattern: requests.$M(..., verify=False, ...)
+
+  - id: hardcoded-secret-assignment
+    languages: [python]
+    severity: ERROR
+    message: Possible hard-coded credential (CWE-798).
+    metadata: {cwe: "CWE-798"}
+    patterns:
+      - pattern: $NAME = "..."
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i).*(api[_-]?key|secret|passwd|password|token|access[_-]?key).*
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: ^(?!.*(YOUR|CHANGE|EXAMPLE|PLACEHOLDER)).*$
+
+  - id: tempfile-mktemp
+    languages: [python]
+    severity: WARNING
+    message: tempfile.mktemp is race-prone; use mkstemp (CWE-377).
+    metadata: {cwe: "CWE-377"}
+    pattern: tempfile.mktemp(...)
+
+  - id: xml-etree-parse
+    languages: [python]
+    severity: WARNING
+    message: xml.etree parsing is vulnerable to XXE on untrusted input (CWE-611).
+    metadata: {cwe: "CWE-611"}
+    pattern-either:
+      - pattern: xml.etree.ElementTree.parse(...)
+      - pattern: ET.parse(...)
