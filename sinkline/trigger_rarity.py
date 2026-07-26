@@ -18,14 +18,26 @@ thing in this method to argue against.
 """
 from __future__ import annotations
 
+import ast
 import math
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, List, Optional
 
-from guards import GuardedSink
+from guards import GuardPredicate, GuardedSink
 from priors import prior_for
 
+try:
+    import z3
+    HAS_Z3 = True
+except ImportError:                       # optional dependency
+    HAS_Z3 = False
+
 TRIGGER_BITS_THRESHOLD = 8.0     # ~1-in-256; below this, not worth reporting
+SOLVER_TIMEOUT_MS = 2000
+# Integer guards are counted over a bounded domain. 0..9 matches the randint
+# ranges these comparisons come from; a wider bound costs time and changes the
+# absolute bits, not the ordering between guarded and unguarded sinks.
+_DOMAIN_LO, _DOMAIN_HI = 0, 9
 
 
 @dataclass
@@ -36,19 +48,102 @@ class Surprisal:
     dormant: bool = False
 
 
+def _as_int_constraint(pred: GuardPredicate):
+    """(`var`, `op`, `literal`) when the predicate is an integer comparison.
+
+    These are the guards worth solving jointly: `x > 5` then `x > 3` is one
+    constraint on one variable, and multiplying them would invent rarity that
+    is not there. Returns None for anything else.
+    """
+    try:
+        node = ast.parse(pred.source, mode="eval").body
+    except SyntaxError:
+        return None
+    if not (isinstance(node, ast.Compare) and len(node.ops) == 1):
+        return None
+    left, right = node.left, node.comparators[0]
+    if not (isinstance(left, ast.Name) and isinstance(right, ast.Constant)):
+        return None
+    if not isinstance(right.value, int) or isinstance(right.value, bool):
+        return None
+    return left.id, node.ops[0], right.value
+
+
+def _model_count_bits(constraints: List[tuple]) -> Optional[float]:
+    """Bits from the joint constraint, so correlated guards are counted once.
+
+    Returns None when nothing can be expressed, leaving the independence
+    estimate in place. Never raises — a solver problem must not fail a scan.
+    """
+    try:
+        solver = z3.Solver()
+        solver.set("timeout", SOLVER_TIMEOUT_MS)
+        env = {}
+        for name, op, literal in constraints:
+            var = env.setdefault(name, z3.Int(name))
+            if isinstance(op, ast.Gt):
+                solver.add(var > literal)
+            elif isinstance(op, ast.GtE):
+                solver.add(var >= literal)
+            elif isinstance(op, ast.Lt):
+                solver.add(var < literal)
+            elif isinstance(op, ast.LtE):
+                solver.add(var <= literal)
+            elif isinstance(op, ast.Eq):
+                solver.add(var == literal)
+            elif isinstance(op, ast.NotEq):
+                solver.add(var != literal)
+            else:
+                return None
+        if not env:
+            return None
+        for var in env.values():
+            solver.add(var >= _DOMAIN_LO, var <= _DOMAIN_HI)
+
+        total = (_DOMAIN_HI - _DOMAIN_LO + 1) ** len(env)
+        satisfying = 0
+        while satisfying <= total and solver.check() == z3.sat:
+            model = solver.model()
+            satisfying += 1
+            solver.add(z3.Or(*[v != model.eval(v, model_completion=True)
+                               for v in env.values()]))
+        if satisfying == 0:
+            return None                   # unsatisfiable: unreachable, not rare
+        return -math.log2(satisfying / total)
+    except Exception:
+        return None
+
+
 def score(gs: GuardedSink) -> Surprisal:
     """Bits of trigger condition guarding this sink."""
     out = Surprisal(tiers={"analytic": 0, "calibrated": 0, "unknown": 0})
-    total = 0.0
+    # Guards split in two: integer comparisons that may be correlated and are
+    # solved jointly, and everything else, which is combined independently.
+    # Scoring only the solved half would silently discard the analytic bits.
+    independent = 0.0
+    int_constraints: List[tuple] = []
     for pred in gs.guards:
         if pred.kind == "date_gt" and not pred.negated:
             out.dormant = True
             continue                      # dormancy is reported, not scored
         prior = prior_for(pred)
         out.tiers[prior.tier] = out.tiers.get(prior.tier, 0) + 1
-        total += -math.log2(prior.probability)
-    out.bits = round(total, 2)
-    # Independence is assumed here, which makes the number an upper bound.
-    # Model counting replaces this when a solver is available.
-    out.degraded = True
+
+        constraint = _as_int_constraint(pred) if HAS_Z3 else None
+        if constraint is not None:
+            int_constraints.append(constraint)
+        else:
+            independent += -math.log2(prior.probability)
+
+    joint = _model_count_bits(int_constraints) if int_constraints else None
+    if joint is None:
+        # Nothing solvable: fall back to treating those guards independently.
+        for pred in gs.guards:
+            if _as_int_constraint(pred) is not None and HAS_Z3:
+                independent += -math.log2(prior_for(pred).probability)
+
+    out.bits = round(independent + (joint or 0.0), 2)
+    # degraded means no solver was available, so wherever guards existed their
+    # combination assumed independence and the bit count is an upper bound.
+    out.degraded = not HAS_Z3
     return out

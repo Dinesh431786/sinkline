@@ -851,6 +851,31 @@ def test_surprisal_is_monotone_in_guard_count():
         previous = bits
 
 
+def test_correlated_guards_do_not_multiply():
+    """`x > 5` then `x > 3` is one constraint, not two independent ones."""
+    from unittest import SkipTest
+    try:
+        import z3  # noqa: F401
+    except ImportError:
+        raise SkipTest("z3-solver not installed")
+    from guards import extract_guards
+    from trigger_rarity import score
+    code = ("import os, random\n"
+            "x = random.randint(0, 9)\n"
+            "if x > 5:\n"
+            "    if x > 3:\n"
+            "        os.system('ls')\n")
+    s = score(extract_guards(code)[0])
+    assert s.bits < 2.0, f"correlated guards inflated to {s.bits} bits"
+
+
+def test_degraded_flag_tracks_z3_availability():
+    from guards import extract_guards
+    from trigger_rarity import score, HAS_Z3
+    gs = extract_guards("import os\nos.system('ls')\n")[0]
+    assert score(gs).degraded is (not HAS_Z3)
+
+
 # --- threat taxonomy: names must describe what is detected ----------------- #
 def test_no_quantum_named_threat_categories():
     """Quantum naming on non-quantum detections reads as overclaiming."""
