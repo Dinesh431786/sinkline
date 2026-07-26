@@ -9,7 +9,7 @@ A deterministic, **local-first, no-LLM** security scanner for Python. It traces 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-89%2F89%20passing-brightgreen.svg)](sinkline/test_sinkline.py)
-[![Benchmark](https://img.shields.io/badge/vs%20Bandit%20%26%20Semgrep-94%25%20recall%20%C2%B7%200%25%20FP-success.svg)](sinkline/BENCHMARK.md)
+[![Benchmark](https://img.shields.io/badge/vs%20Bandit%20%26%20Semgrep-93.5%25%20CI--gate%20recall%20%C2%B7%200%25%20FP-success.svg)](sinkline/BENCHMARK.md)
 [![SARIF 2.1.0](https://img.shields.io/badge/output-SARIF%202.1.0%20%C2%B7%20CWE-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 [![No-LLM](https://img.shields.io/badge/engine-deterministic%20%C2%B7%20no--LLM-7c5cff.svg)](#-faq)
 
@@ -34,7 +34,7 @@ Sinkline is the opposite bet: **deterministic, explainable, and 100% on-device.*
 
 - 🛡️ **Two threat families, one scan** — everyday OWASP/CWE bugs **+** stealth supply-chain attacks.
 - 🔒 **Air-gapped by design** — no cloud, no LLM, no telemetry. Your code never leaves the machine.
-- 🎯 **Low noise** — sink-aware confidence scoring; **0% false positives** on our benchmark of realistic benign code.
+- 🎯 **Low noise** — sink-aware confidence scoring; **0% false positives** on our own benchmark of realistic benign code (self-authored corpus — see [Measured benchmark](#-measured-benchmark--head-to-head-vs-bandit--semgrep)).
 - 🔁 **Reproducible** — same input → same result, every time (great for CI gates & compliance).
 - 🧰 **Batteries included** — CLI, web UI, **SARIF 2.1.0** output, deterministic **auto-fix**, and a tamper-evident audit ledger.
 
@@ -169,13 +169,17 @@ Corpus: **31 malicious** samples (faithful reconstructions of documented 2024–
 
 <div align="center">
 
-| Tool | Malware recall | False-positive rate |
+| Tool | CI-gate recall (High+ alert) | False-positive rate |
 |---|:---:|:---:|
-| **Sinkline** | **29/31 = 94%** | **0/34 = 0%** |
+| **Sinkline** | **29/31 = 93.5%** | **0/34 = 0%** |
 | Semgrep (OSS rules) | 19/29 = 66% | 1/32 = 3% |
 | Bandit | 15/29 = 52% | 2/32 = 6% |
 
 <sub>*External tools are scored only on inputs they can process — dependency manifests are excluded from their denominators, since Bandit/Semgrep structurally cannot scan them for typosquatting.*</sub>
+
+<sub>**Two different recall numbers appear in this repo and they measure different things.** *CI-gate recall* (93.5%) is how often a High+ finding would fail a build. *Category recall* (100%, in [`BENCHMARK.md`](sinkline/BENCHMARK.md)) is how often the right threat category was named. The second is the easier bar.</sub>
+
+<sub>**This corpus is written by this project**, so it is not independent evidence — a tool evaluated on its authors' own samples will do well by construction. An evaluation against public corpora of real malicious packages is specified in [`docs/superpowers/specs/2026-07-26-trigger-rarity-design.md`](docs/superpowers/specs/2026-07-26-trigger-rarity-design.md).</sub>
 
 </div>
 
