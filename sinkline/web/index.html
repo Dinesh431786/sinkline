@@ -387,17 +387,42 @@ async function runDemo(){
   finally { busy(false); }
 }
 // Source plus dependency manifests — manifests are what the typosquat check reads.
+// Kept in step with is_manifest() in dependency_audit.py; the test suite asserts it.
 function scannable(name){
   const base = (name || "").split(/[\\/]/).pop().toLowerCase();
   return base.endsWith(".py") || base === "pyproject.toml" || base === "pipfile" ||
-         (base.startsWith("requirements") && base.endsWith(".txt"));
+         base === "setup.cfg" || base === "constraints.txt" ||
+         (base.endsWith(".txt") && base.includes("require"));
+}
+// Mirrors SKIP_DIRS in webapp.py — the drop box promises these are skipped, and
+// filtering here also keeps a virtualenv from being read and uploaded at all.
+const SKIP_DIRS = new Set([".git", "__pycache__", ".venv", "venv", "node_modules",
+  ".mypy_cache", ".pytest_cache", "build", "dist", ".tox", ".eggs", "site-packages",
+  ".ruff_cache"]);
+function vendored(path){
+  const parts = (path || "").split(/[\\/]/);
+  parts.pop();
+  return parts.some(p => SKIP_DIRS.has(p));
+}
+// Two files can want the same key — most often because the browser gave no
+// webkitRelativePath, collapsing a whole tree onto bare filenames. Overwriting
+// silently dropped them while the status line still claimed the full count.
+function uniqueKey(files, key){
+  if (!(key in files)) return key;
+  const dot = key.lastIndexOf(".");
+  const stem = dot > 0 ? key.slice(0, dot) : key, ext = dot > 0 ? key.slice(dot) : "";
+  let i = 2;
+  while (`${stem}~${i}${ext}` in files) i++;
+  return `${stem}~${i}${ext}`;
 }
 
 async function runFiles(list){
   scanCode = null;
   const all = [...list];
   const zip = all.find(f => f.name.toLowerCase().endsWith(".zip"));
-  const picked = all.filter(f => scannable(f.webkitRelativePath || f.name));
+  const named = all.map(f => ({f, path: f.webkitRelativePath || f.name}));
+  const vendorCount = named.filter(x => vendored(x.path)).length;
+  const picked = named.filter(x => scannable(x.path) && !vendored(x.path));
   busy(true);
   try {
     if (zip){
@@ -407,19 +432,32 @@ async function runFiles(list){
     }
     if (!all.length){ setStatus("Nothing was selected."); return; }
     if (!picked.length){
-      setStatus(`${all.length} file(s) selected, but no Python source or dependency manifest among them.`);
+      setStatus(vendorCount === all.length
+        ? `All ${all.length} file(s) were inside a dependency or cache directory.`
+        : `${all.length} file(s) selected, but no Python source or dependency manifest among them.`);
       return;
     }
     setStatus(`Reading ${picked.length} of ${all.length} file(s)…`);
-    const files = {}; let total = 0;
-    for (const f of picked){
+    const files = {}; let total = 0, flattened = 0;
+    for (const {f, path} of picked){
       const t = await readText(f);
       total += t.length;
-      files[f.webkitRelativePath || f.name] = t;
+      // No relative path means the tree structure is already lost; keep the file
+      // under a suffixed name rather than letting it overwrite a namesake.
+      if (!f.webkitRelativePath) flattened++;
+      files[uniqueKey(files, path)] = t;
     }
     if (total > 6000000){ setStatus("That selection is over the 6 MB limit. Zip it instead."); return; }
-    setStatus(`Scanning ${picked.length} file(s)…`);
-    show(await post("/api/scan-files", {files}));
+    const sending = Object.keys(files).length;
+    setStatus(`Scanning ${sending} file(s)…`);
+    const resp = await post("/api/scan-files", {files});
+    show(resp);
+    // Say plainly what was left out, instead of a count that quietly disagrees
+    // with the one on the result card.
+    const notes = [];
+    if (vendorCount) notes.push(`${vendorCount} skipped in dependency/cache dirs`);
+    if (flattened) notes.push(`${flattened} uploaded without folder structure — cross-file taint is reduced`);
+    if (notes.length && resp.ok) setStatus(notes.join(" · "));
   } catch (err) {
     setStatus("Could not read that selection — " + err.message);
   } finally { busy(false); }
@@ -514,7 +552,8 @@ function renderVerdict(r){
         <div class="count ${total ? "" : "clean"}">${total}</div>
       </div>
       <div class="vstat">
-        <div><span class="eyebrow">Files</span><b>${s.files_scanned}</b></div>
+        <div><span class="eyebrow">Files</span><b>${s.files_scanned}</b>${
+          s.files_skipped ? `<span style="font-size:11px;color:var(--muted)"> +${s.files_skipped} skipped</span>` : ""}</div>
         <div><span class="eyebrow">Peak CVSS</span><b style="color:${topColor}">${(s.max_cvss || 0).toFixed(1)}</b></div>
         <div><span class="eyebrow">Scan</span><b>${s.duration_ms}<span style="font-size:11px;color:var(--muted)"> ms</span></b></div>
         <div><span class="eyebrow">AST entropy</span><b>${s.ast_entropy}</b></div>

@@ -36,8 +36,9 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 MAX_BODY = 8_000_000          # 8 MB request cap
 MAX_FILES = 300               # refuse pathological project sizes
 MAX_TOTAL_SRC = 6_000_000     # 6 MB of combined source
-SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", ".mypy_cache",
-             ".pytest_cache", "build", "dist", ".tox", ".eggs"}
+# Single source of truth, shared with cli.py and mirrored in web/index.html so
+# the browser filters before uploading. The test suite asserts they stay equal.
+from skiplist import SKIP_DIRS, is_vendored as _vendored  # noqa: E402
 
 # The demo is REAL files under examples/insecure-demo-app/ (browsable in the repo,
 # not an inline string blob). A small "analytics service" whose dangers are
@@ -86,8 +87,8 @@ def _finding_dict(f):
     return d
 
 
-def _payload(findings, *, files_scanned, entropy=0.0, physics=None, symbolic=None,
-             symbolic_unsafe=False, sinks=None, duration_ms=0.0):
+def _payload(findings, *, files_scanned, files_skipped=0, entropy=0.0, physics=None,
+             symbolic=None, symbolic_unsafe=False, sinks=None, duration_ms=0.0):
     counts: dict = {}
     for f in findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
@@ -99,7 +100,10 @@ def _payload(findings, *, files_scanned, entropy=0.0, physics=None, symbolic=Non
             "by_severity": counts,
             "max_cvss": max((f.cvss for f in findings), default=0.0),
             "ast_entropy": round(entropy, 2),
+            # files_scanned is what was actually analysed, never what was offered —
+            # a count that overstates hides files the scan silently dropped.
             "files_scanned": files_scanned,
+            "files_skipped": files_skipped,
             "duration_ms": round(duration_ms, 1),
         },
         "symbolic": symbolic if symbolic else "N/A",
@@ -144,6 +148,14 @@ def build_files_response(files: dict) -> dict:
     """Multiple files: per-file analysis + cross-file interprocedural taint."""
     if not files:
         return {"ok": False, "error": "no files provided"}
+    received = len(files)
+    # Vendored trees are somebody else's code and drown the signal. The UI says
+    # they are skipped, so the folder path has to honour that too, not just .zip.
+    files = {p: c for p, c in files.items() if not _vendored(p)}
+    if not files:
+        return {"ok": False,
+                "error": "every file in that selection was inside a dependency, "
+                         "build or cache directory"}
     if len(files) > MAX_FILES:
         return {"ok": False, "error": f"too many files ({len(files)} > {MAX_FILES})"}
     if sum(len(v) for v in files.values()) > MAX_TOTAL_SRC:
@@ -153,12 +165,14 @@ def build_files_response(files: dict) -> dict:
     start = time.time()
     all_findings = []
     entropies = []
+    analysed = 0
     unsafe = False
     for path, code in files.items():
         try:
             res = analyze(code, use_symbolic=True, use_cache=False, path=path)
         except ValidationError:
             continue
+        analysed += 1
         entropies.append(res.ast_entropy)
         unsafe = unsafe or (res.symbolic[1] if res.symbolic else False)
         for f in res.findings:
@@ -180,7 +194,8 @@ def build_files_response(files: dict) -> dict:
 
     avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
     return _payload(
-        all_findings, files_scanned=len(files), entropy=avg_entropy,
+        all_findings, files_scanned=analysed, files_skipped=received - analysed,
+        entropy=avg_entropy,
         symbolic=("UNSAFE (reachable sink in ≥1 file)" if unsafe
                   else "SAFE (no unconditional reachable sink)"),
         symbolic_unsafe=unsafe, duration_ms=(time.time() - start) * 1000,
@@ -188,13 +203,21 @@ def build_files_response(files: dict) -> dict:
 
 
 def build_zip_response(zip_bytes: bytes) -> dict:
-    """Extract .py files from an uploaded zip and scan as a project."""
+    """Extract source and dependency manifests from a zip and scan as a project."""
+    try:
+        from dependency_audit import is_manifest
+    except Exception:                                  # pragma: no cover
+        def is_manifest(_p):                           # type: ignore[misc]
+            return False
     files = {}
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             total = 0
             for info in zf.infolist():
-                if info.is_dir() or not info.filename.endswith(".py"):
+                # Manifests carry the typosquat signal — filtering to *.py meant
+                # a .zip upload silently skipped the dependency audit entirely.
+                if info.is_dir() or not (info.filename.endswith(".py")
+                                         or is_manifest(info.filename)):
                     continue
                 if any(part in SKIP_DIRS for part in info.filename.split("/")):
                     continue
@@ -208,7 +231,7 @@ def build_zip_response(zip_bytes: bytes) -> dict:
     except zipfile.BadZipFile:
         return {"ok": False, "error": "not a valid .zip archive"}
     if not files:
-        return {"ok": False, "error": "no .py files found in archive"}
+        return {"ok": False, "error": "no Python source or dependency manifest in archive"}
     return build_files_response(files)
 
 

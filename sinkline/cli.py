@@ -31,14 +31,22 @@ from self_healing import ValidationError, health  # noqa: E402
 SEVERITY_ORDER = ["Info", "Low", "Medium", "High", "Critical"]
 _RANK = {s: i for i, s in enumerate(SEVERITY_ORDER)}
 
+# Reports carry arrows and check marks. Piping them on Windows (cp1252) raised
+# UnicodeEncodeError *after* the scan had already finished, turning a completed
+# scan into a crash and a useless exit code. Degrade the characters, not the run.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:                                   # pragma: no cover
+        pass
+
 # ANSI colours (auto-disabled when not a TTY).
 _COLOR = sys.stdout.isatty()
 def _c(code, s):
     return f"\033[{code}m{s}\033[0m" if _COLOR else s
 SEV_C = {"Critical": "1;37;41", "High": "1;31", "Medium": "1;33", "Low": "1;36", "Info": "0;37"}
 
-SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", ".mypy_cache",
-             ".pytest_cache", "build", "dist", ".tox", ".eggs"}
+from skiplist import SKIP_DIRS                    # noqa: E402  (shared with webapp.py)
 
 
 def _iter_python_files(path):
@@ -66,6 +74,19 @@ def _iter_manifests(path):
                 yield os.path.join(root, f)
 
 
+def _rel(p: str) -> str:
+    """relpath, but never fatal.
+
+    On Windows os.path.relpath raises when the target and the working directory
+    sit on different drives, which crashed the whole scan for a perfectly valid
+    path like `sinkline scan E:\\repo` run from C:. Fall back to the absolute path.
+    """
+    try:
+        return os.path.relpath(p)
+    except ValueError:
+        return os.path.abspath(p)
+
+
 def _scan_path(path, use_symbolic):
     """Analyze every .py file under path; return (all_findings, files_scanned, errors).
 
@@ -77,7 +98,7 @@ def _scan_path(path, use_symbolic):
     corpus = {}  # relpath -> code, for the cross-file taint pass
     for fp in _iter_python_files(path):
         files += 1
-        rel = os.path.relpath(fp)
+        rel = _rel(fp)
         try:
             with open(fp, "r", encoding="utf-8", errors="replace") as fh:
                 code = fh.read()
@@ -107,7 +128,7 @@ def _scan_path(path, use_symbolic):
         for mp in _iter_manifests(path):
             try:
                 with open(mp, "r", encoding="utf-8", errors="replace") as fh:
-                    all_findings.extend(audit_manifest(os.path.relpath(mp), fh.read()))
+                    all_findings.extend(audit_manifest(_rel(mp), fh.read()))
             except Exception:
                 pass
     except Exception as e:
@@ -125,7 +146,7 @@ def _scan_path(path, use_symbolic):
                         continue
                     try:
                         with open(fpath, "r", encoding="utf-8", errors="replace") as fh:
-                            all_findings.extend(scan_secrets(fh.read(), os.path.relpath(fpath)))
+                            all_findings.extend(scan_secrets(fh.read(), _rel(fpath)))
                     except Exception:
                         pass
     except Exception as e:

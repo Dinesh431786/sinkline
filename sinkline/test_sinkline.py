@@ -609,13 +609,28 @@ def test_dead_branch_is_safe():
     assert unsafe is False
 
 
+def _require_z3():
+    """Without z3 the engine reports (message, False) for everything.
+
+    That makes the 'safe' assertion below pass for the wrong reason and the
+    'unsafe' one fail for a reason that is not a bug — so skip both instead.
+    """
+    from unittest import SkipTest
+    try:
+        import z3  # noqa: F401
+    except ImportError:
+        raise SkipTest("z3-solver not installed; symbolic reachability is inert")
+
+
 def test_unreachable_counter_is_safe():
+    _require_z3()
     code = "k=0\nif (random.randint(0,7)==3):\n    k+=1\nif k==99:\n    os.system('x')"
     _, unsafe = run_symbolic_verification(code)
     assert unsafe is False
 
 
 def test_reachable_counter_is_unsafe():
+    _require_z3()
     code = ("k=0\nif (random.randint(0,7)==3):\n    k+=1\n"
             "if (random.randint(0,9)==5):\n    k+=1\nif k==2:\n    os.system('x')")
     _, unsafe = run_symbolic_verification(code)
@@ -675,17 +690,106 @@ def test_dedupe_removes_duplicates():
     assert len(dedupe([f1, f2])) == 1
 
 
+# --- upload accounting: what we claim to scan is what we scan -------------- #
+def test_zip_scan_includes_dependency_manifests():
+    """A .zip used to be filtered to *.py, so typosquat checks never ran on it."""
+    import io, zipfile
+    from webapp import build_zip_response
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("proj/app.py", "import os\n")
+        zf.writestr("proj/requirements.txt", "numpi==1.0\n")
+    r = build_zip_response(buf.getvalue())
+    assert r["ok"], r
+    assert any(f["pattern"] == "TYPOSQUAT_DEPENDENCY" for f in r["findings"]), \
+        "manifest in the archive was dropped before the typosquat audit"
+
+
+def test_files_response_skips_vendored_directories():
+    """The folder path advertises 'skips venv and __pycache__' — honour it."""
+    from webapp import build_files_response
+    r = build_files_response({
+        "app.py": "import os\n",
+        ".venv/lib/site-packages/evil.py": "import os\nos.system('curl x|sh')\n",
+        "__pycache__/app.cpython-311.py": "import os\nos.system('rm -rf /')\n",
+    })
+    assert r["ok"]
+    assert r["summary"]["files_scanned"] == 1, "vendored files were counted as scanned"
+    assert r["summary"]["files_skipped"] == 2
+    assert all("site-packages" not in (f.get("artifact_uri") or "") for f in r["findings"])
+
+
+def test_files_response_reports_only_what_it_analysed():
+    """files_scanned must never overstate: it is the count actually analysed."""
+    from webapp import build_files_response
+    r = build_files_response({f"pkg/m{i}.py": "x = 1\n" for i in range(12)})
+    assert r["summary"]["files_scanned"] == 12
+    assert r["summary"]["files_skipped"] == 0
+
+
+def test_cli_survives_cross_drive_paths_and_legacy_encodings():
+    """Both faults killed a scan that had already succeeded, on Windows only."""
+    import os, subprocess, sys, tempfile
+    here = os.path.dirname(os.path.abspath(__file__))
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "bad.py"), "w", encoding="utf-8") as fh:
+            fh.write("import os\nos.system('echo ' + input())\n")
+        # cwd is deliberately NOT the temp dir: on Windows these land on
+        # different drives, which is what broke os.path.relpath.
+        env = dict(os.environ, PYTHONIOENCODING="cp1252")
+        p = subprocess.run([sys.executable, os.path.join(here, "cli.py"), "scan", d],
+                           capture_output=True, text=True, cwd=here, env=env)
+    assert "ValueError" not in p.stderr, p.stderr
+    assert "UnicodeEncodeError" not in p.stderr, p.stderr
+    assert p.returncode in (0, 2), f"rc={p.returncode} stderr={p.stderr}"
+
+
+def test_cli_and_webapp_share_one_skip_list():
+    """cli.py and webapp.py had drifted apart; both must use the canonical list."""
+    import cli, webapp
+    from skiplist import SKIP_DIRS
+    assert cli.SKIP_DIRS is SKIP_DIRS and webapp.SKIP_DIRS is SKIP_DIRS
+
+
+def test_client_and_server_skip_lists_agree():
+    """The browser filters before upload; drift between the two lists is silent."""
+    import os, re
+    here = os.path.dirname(os.path.abspath(__file__))
+    from skiplist import SKIP_DIRS
+    html = open(os.path.join(here, "web", "index.html"), encoding="utf-8").read()
+    m = re.search(r"const SKIP_DIRS = new Set\(\[(.*?)\]\)", html, re.S)
+    assert m, "client SKIP_DIRS not found in web/index.html"
+    client = set(re.findall(r'"([^"]+)"', m.group(1)))
+    assert client == SKIP_DIRS, f"client-only={client - SKIP_DIRS} server-only={SKIP_DIRS - client}"
+
+
+def test_client_uploads_every_manifest_the_backend_can_read():
+    """scannable() gates the upload; anything is_manifest() accepts must survive it."""
+    import os, re
+    here = os.path.dirname(os.path.abspath(__file__))
+    html = open(os.path.join(here, "web", "index.html"), encoding="utf-8").read()
+    body = re.search(r"function scannable\(name\)\{(.*?)\n\}", html, re.S)
+    assert body, "scannable() not found in web/index.html"
+    src = body.group(1)
+    for base in ("pyproject.toml", "pipfile", "setup.cfg", "constraints.txt"):
+        assert base in src, f"{base} is a manifest the backend reads but the client drops"
+
+
 # --- standalone runner ----------------------------------------------------- #
 if __name__ == "__main__":
-    passed = failed = 0
+    from unittest import SkipTest
+    passed = failed = skipped = 0
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
             try:
                 fn()
                 print(f"  PASS  {name}")
                 passed += 1
+            except SkipTest as e:
+                print(f"  SKIP  {name}: {e}")
+                skipped += 1
             except Exception as e:
                 print(f"  FAIL  {name}: {e}")
                 failed += 1
-    print(f"\n{passed} passed, {failed} failed")
+    print(f"\n{passed} passed, {failed} failed, {skipped} skipped")
     raise SystemExit(1 if failed else 0)
