@@ -1,0 +1,12 @@
+{
+  "source_corpus": "seed values, not yet measured",
+  "generated": "2026-07-26",
+  "sample_count": 0,
+  "note": "Regenerate with research/calibrate.py once the benign corpus exists. Until sample_count > 0 these are reasoned estimates, not evidence, and any result depending on them is provisional.",
+  "shapes": {
+    "hostname_eq": 0.02,
+    "env_eq": 0.15,
+    "platform_eq": 0.34,
+    "date_gt": 0.5
+  }
+}

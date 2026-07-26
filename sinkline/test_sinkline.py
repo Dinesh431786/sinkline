@@ -734,6 +734,66 @@ def test_extract_guards_survives_syntax_error():
     assert extract_guards("def broken(:\n") == []
 
 
+def test_analytic_priors_are_exact():
+    from guards import GuardPredicate
+    from priors import prior_for
+    p = prior_for(GuardPredicate("random_lt", "random.random() < 0.005", 1,
+                                 operands=(0.005,)))
+    assert p.probability == 0.005 and p.tier == "analytic"
+
+    q = prior_for(GuardPredicate("randint_eq", "random.randint(0, 9) == 3", 1,
+                                 operands=(0, 9)))
+    assert abs(q.probability - 0.1) < 1e-9 and q.tier == "analytic"
+
+
+def test_negation_inverts_an_analytic_prior():
+    from guards import GuardPredicate
+    from priors import prior_for
+    p = prior_for(GuardPredicate("random_lt", "random.random() < 0.2", 1,
+                                 negated=True, operands=(0.2,)))
+    assert abs(p.probability - 0.8) < 1e-9
+
+
+def test_unknown_predicate_is_treated_as_common():
+    """The primary false-positive control: opaque conditions never look rare."""
+    from guards import GuardPredicate
+    from priors import prior_for
+    p = prior_for(GuardPredicate("unknown", "some_helper(x).enabled", 1))
+    assert p.probability >= 0.5 and p.tier == "unknown"
+
+
+def test_platform_check_is_common_not_rare():
+    from guards import GuardPredicate
+    from priors import prior_for
+    p = prior_for(GuardPredicate("platform_eq", "platform.system() == 'Linux'", 1))
+    assert p.probability >= 0.2 and p.tier == "calibrated"
+
+
+def test_calibration_table_has_provenance():
+    """A measured number with no record of what measured it is not evidence."""
+    from priors import load_calibration
+    table = load_calibration()
+    for key in ("source_corpus", "generated", "sample_count", "shapes"):
+        assert key in table, f"calibration table missing {key}"
+    assert table["sample_count"] >= 0
+
+
+def test_calibrated_shape_beats_unknown_default():
+    from guards import GuardPredicate
+    from priors import prior_for
+    p = prior_for(GuardPredicate("hostname_eq", "socket.gethostname() == 'x'", 1))
+    assert p.tier == "calibrated"
+    assert p.probability < 0.5, "a hostname equality is rarer than the unknown default"
+
+
+def test_shape_erases_literals():
+    from guards import GuardPredicate
+    from priors import shape_of
+    a = GuardPredicate("env_eq", "os.environ.get('A') == 'x'", 1)
+    b = GuardPredicate("env_eq", "os.environ.get('B') == 'y'", 1)
+    assert shape_of(a) == shape_of(b) == "env_eq"
+
+
 # --- threat taxonomy: names must describe what is detected ----------------- #
 def test_no_quantum_named_threat_categories():
     """Quantum naming on non-quantum detections reads as overclaiming."""
