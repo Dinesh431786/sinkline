@@ -154,6 +154,34 @@ CATALOG: Dict[str, ThreatMeta] = {
             "Avoid shelling out; use safe APIs with argument lists and never pass "
             "untrusted input to exec/eval/os.system."),
     ),
+    "TRIGGERED_PAYLOAD": ThreatMeta(
+        rule_id="QT.TRIGGERED_PAYLOAD",
+        title="Dangerous Sink Behind an Improbable Trigger",
+        cwe="CWE-506", cwe_name="Embedded Malicious Code",
+        severity="Critical", base_confidence="High",
+        description=(
+            "A dangerous sink is reachable only when conditions hold that are "
+            "very unlikely in ordinary execution. Benign code reaches such "
+            "sinks under common conditions; a payload hidden behind a rare "
+            "trigger is the structure of a logic bomb."),
+        remediation=(
+            "Establish why this code path exists and what condition activates "
+            "it. Rare, environment-specific triggers around an execution sink "
+            "rarely have a legitimate purpose."),
+    ),
+    "DORMANT_PAYLOAD": ThreatMeta(
+        rule_id="QT.DORMANT_PAYLOAD",
+        title="Dangerous Sink Behind a Date Condition",
+        cwe="CWE-511", cwe_name="Logic/Time Bomb",
+        severity="High", base_confidence="Medium",
+        description=(
+            "A dangerous sink executes only after (or before) a specific date, "
+            "so the code behaves differently over time and can pass review "
+            "while remaining inert."),
+        remediation=(
+            "Confirm the date condition is intentional scheduling. Time-gated "
+            "execution sinks are the classic time-bomb pattern."),
+    ),
     "OBFUSCATED_PAYLOAD": ThreatMeta(
         rule_id="QT.OBFUSCATED_PAYLOAD",
         title="Encoded / Obfuscated Payload",

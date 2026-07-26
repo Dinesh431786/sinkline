@@ -876,6 +876,84 @@ def test_degraded_flag_tracks_z3_availability():
     assert score(gs).degraded is (not HAS_Z3)
 
 
+def test_triggered_payload_finding_reports_bits_as_evidence():
+    from trigger_rarity import analyze_triggers
+    code = ("import os, random, socket\n"
+            "if random.random() < 0.005:\n"
+            "    if socket.gethostname() == 'build-07':\n"
+            "        os.system('curl evil')\n")
+    fs = analyze_triggers(code)
+    assert any(f.pattern == "TRIGGERED_PAYLOAD" for f in fs)
+    ev = " ".join(fs[0].evidence)
+    assert "bits" in ev and "random.random() < 0.005" in ev
+
+
+def test_benign_code_produces_no_trigger_finding():
+    from trigger_rarity import analyze_triggers
+    code = ("import os\n"
+            "if config.debug:\n"
+            "    os.system('ls')\n")
+    assert analyze_triggers(code) == []
+
+
+def test_dormant_payload_reported_separately():
+    from trigger_rarity import analyze_triggers
+    code = ("import os, datetime\n"
+            "if datetime.date.today() > datetime.date(2027, 1, 1):\n"
+            "    os.system('rm -rf /')\n")
+    assert any(f.pattern == "DORMANT_PAYLOAD" for f in analyze_triggers(code))
+
+
+def test_analyze_surfaces_trigger_findings():
+    from analyzer import analyze
+    code = ("import os, random, socket\n"
+            "if random.random() < 0.005:\n"
+            "    if socket.gethostname() == 'build-07':\n"
+            "        os.system('curl evil')\n")
+    res = analyze(code, use_cache=False)
+    assert any(f.pattern == "TRIGGERED_PAYLOAD" for f in res.findings)
+
+
+def test_trigger_detector_adds_no_false_positives_on_benign_corpus():
+    """The benign half of the corpus must stay clean after adding a Critical rule."""
+    import benchmark
+    from trigger_rarity import analyze_triggers
+    offenders = [e[0] for e in benchmark.BENIGN
+                 if e[1] == "code" and analyze_triggers(e[2])]
+    assert not offenders, f"new trigger rule fires on benign samples: {offenders}"
+
+
+def test_trigger_detector_actually_fires_on_something():
+    """A detector that never fires is not a passing test, it is dead code.
+
+    Pinned because the first threshold (8 bits, chosen a priori) detected
+    nothing at all on the whole corpus and every other test still passed.
+    """
+    import benchmark
+    from trigger_rarity import analyze_triggers
+    caught = [e[0] for e in benchmark.MALICIOUS
+              if e[1] == "code" and analyze_triggers(e[2])]
+    assert "probabilistic_bomb" in caught, (
+        f"the canonical logic bomb is not detected; caught={caught}")
+
+
+def test_most_corpus_malware_is_unconditional():
+    """Records the scope limit measured on this corpus, so it cannot be forgotten.
+
+    Only a small minority of samples carry any guard at all. Guard surprisal
+    correctly scores the rest zero, which is why the claim is 'added detections
+    on the conditional tail', never general malware detection.
+    """
+    import benchmark
+    from guards import extract_guards
+    from trigger_rarity import score
+    code = [e for e in benchmark.MALICIOUS if e[1] == "code"]
+    guarded = [e[0] for e in code
+               if max((score(g).bits for g in extract_guards(e[2])), default=0) > 0]
+    assert len(guarded) < len(code) / 2, (
+        "if most samples became guarded, the scope claim in the spec needs revisiting")
+
+
 # --- threat taxonomy: names must describe what is detected ----------------- #
 def test_no_quantum_named_threat_categories():
     """Quantum naming on non-quantum detections reads as overclaiming."""

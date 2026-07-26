@@ -32,7 +32,21 @@ try:
 except ImportError:                       # optional dependency
     HAS_Z3 = False
 
-TRIGGER_BITS_THRESHOLD = 8.0     # ~1-in-256; below this, not worth reporting
+# 4 bits = 1-in-16. Chosen against measured data, not intuition: on the 65-sample
+# corpus the guarded malicious samples score 5.64 (probabilistic_bomb, p=0.02),
+# 3.32 (chained_bomb), 2.74 (env_keying) and 1.00 (cross_func_bomb) bits, while
+# every benign sample scores 0. The original a-priori 8.0 (1-in-256) detected
+# nothing at all.
+#
+# 4.0 rather than 2.0 deliberately: 2 bits is a 1-in-4 guard, and a benign A/B
+# test written as `if random.random() < 0.2:` around a subprocess call would sit
+# right there. The benign half of this corpus scores 0 only because none of its
+# samples guard a dangerous sink, so it provides no evidence at the low end.
+#
+# PROVISIONAL. This is tuned on a self-authored corpus of 28 malicious code
+# samples, which is not evidence. The real value comes from the held-out run
+# described in docs/superpowers/specs/2026-07-26-trigger-rarity-design.md.
+TRIGGER_BITS_THRESHOLD = 4.0
 SOLVER_TIMEOUT_MS = 2000
 # Integer guards are counted over a bounded domain. 0..9 matches the randint
 # ranges these comparisons come from; a wider bound costs time and changes the
@@ -146,4 +160,34 @@ def score(gs: GuardedSink) -> Surprisal:
     # degraded means no solver was available, so wherever guards existed their
     # combination assumed independence and the bit count is an upper bound.
     out.degraded = not HAS_Z3
+    return out
+
+
+def analyze_triggers(code: str):
+    """Findings for sinks hidden behind improbable or time-based triggers."""
+    from findings import Finding, get_meta
+    from guards import extract_guards
+
+    out = []
+    for gs in extract_guards(code):
+        s = score(gs)
+        if s.dormant:
+            out.append(Finding(
+                pattern="DORMANT_PAYLOAD", meta=get_meta("DORMANT_PAYLOAD"),
+                confidence="Medium", line=gs.line, snippet=gs.sink_name,
+                evidence=[f"{gs.sink_name} runs only past a date condition",
+                          *[g.source for g in gs.guards]],
+            ))
+        if s.bits >= TRIGGER_BITS_THRESHOLD:
+            out.append(Finding(
+                pattern="TRIGGERED_PAYLOAD", meta=get_meta("TRIGGERED_PAYLOAD"),
+                confidence="Low" if s.degraded else "High",
+                risk_score=min(s.bits / 32.0, 1.0),
+                line=gs.line, snippet=gs.sink_name,
+                evidence=[
+                    f"{gs.sink_name} is behind {s.bits} bits of trigger condition"
+                    + (" (estimated: no solver available)" if s.degraded else ""),
+                    *[g.source for g in gs.guards],
+                ],
+            ))
     return out

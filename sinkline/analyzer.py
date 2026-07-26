@@ -457,6 +457,15 @@ def analyze(code: Any, use_symbolic: bool = True, use_cache: bool = True,
             snippet=_snippet_at(code, obf.line), evidence=obf.evidence,
         ))
 
+    # Guard surprisal: sinks reachable only under improbable conditions. The
+    # existing DANGEROUS_SINK rule knows only whether a sink is guarded; this
+    # measures how unlikely the guard is to hold.
+    try:
+        from trigger_rarity import analyze_triggers
+        findings.extend(analyze_triggers(code))
+    except Exception:
+        pass    # a new engine must never break the audit
+
     # Context-awareness for REAL repos: a vulnerability in a test fixture,
     # example, benchmark, or docs file is almost always intentional. Keep it
     # visible but drop to Low confidence so it never breaks a CI gate — this is

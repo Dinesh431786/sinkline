@@ -1,6 +1,6 @@
 # Sinkline — Measured Benchmark
 
-_Reproduce: `python benchmark.py`. Corpus: 31 malicious (faithful reconstructions of documented campaigns) + 34 realistic benign hard-negatives. Ran in 119 ms._
+_Reproduce: `python benchmark.py`. Corpus: 31 malicious (faithful reconstructions of documented campaigns) + 34 realistic benign hard-negatives. Ran in 196 ms._
 
 ## Headline metrics
 
